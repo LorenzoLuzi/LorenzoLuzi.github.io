@@ -10,6 +10,52 @@ author_profile: true
 
 <html>
     <head>
+        <style>
+            /* The font size of the numbers */
+            input[type="number"]
+            {
+                font-size:16px;
+            }
+            
+            /* The sliders */
+            .slider {
+              -webkit-appearance: none;
+              width: 50%;
+              height: 10px;
+              border-radius: 2px;  
+              background: #d3d3d3; /*Bar color*/
+              outline: none;
+              opacity: 0.7;
+              -webkit-transition: .2s;
+              transition: opacity .2s;
+            }
+            
+            /* The buttons */
+            .button {
+              width: 10%;
+            }
+            
+            /* Mouse-over effects */
+            .slider::-webkit-slider-thumb {
+              -webkit-appearance: none;
+              appearance: none;
+              width: 25px;
+              height: 25px;
+              border-radius: 50%; 
+              background: #0072BD; /*Dot color*/
+              cursor: pointer;
+            }
+
+            /* The slider handle (use -webkit- (Chrome, Opera, Safari, Edge) and -moz- (Firefox) to override default look) */
+            .slider::-moz-range-thumb {
+              width: 25px;
+              height: 25px;
+              border-radius: 50%;
+              background: #0072BD; /*Dot color*/
+              cursor: pointer;
+            }
+        </style>
+        
         <!-- Some useful links: -->
         <!-- https://developers-dot-devsite-v2-prod.appspot.com/chart/interactive/docs/gallery/scatterchart -->
         <!-- https://developers-dot-devsite-v2-prod.appspot.com/chart/interactive/docs/gallery/linechart -->
@@ -17,7 +63,7 @@ author_profile: true
         <!-- https://stackoverflow.com/questions/42891409/draw-a-line-on-google-charts-scatterchart -->
         
         <!-- Load libraries -->  
-        <script type="text/javascript" src="https://www.google.com/jsapi"></script>
+        <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
         <script type="text/x-mathjax-config">
             MathJax.Hub.Config({tex2jax: {inlineMath: [['$','$'], ['\\(','\\)']]}});
         </script> 
@@ -37,8 +83,8 @@ author_profile: true
         //The fucntion that draws everything
         function drawDashboard() {
             //Variables drawn from text fields
-            let m = parseFloat(document.getElementById('m_numbox').value);
-            let b = parseFloat(document.getElementById('b_numbox').value);
+            let m = parseFloat(document.getElementById('mBox').value);
+            let b = parseFloat(document.getElementById('bBox').value);
             
             // Create the scatter plot data
             var data = new google.visualization.DataTable();
@@ -106,30 +152,67 @@ author_profile: true
             // Formatting
             let lineWidth=3; //linewidth for line plots
             var options = {
+                // Plot types
                 series: {0: {type: 'scatter'}, 
                          1: {type: 'line', lineWidth:lineWidth}, 
                          2: {type: 'line', lineWidth:lineWidth}},
+                colors: ['#0072BD','red','green'],
+
+                //Canvas properties
+                backgroundColor: 'transparent',
+                baselineColor: 'transparent', //Remove the bolded x and y axes
+                width:800,
+                height:500,
+
+                //Title
+                title: 'Simple Linear Regression: m = ' + String(m) + ', b = ' + String(b) + ', total error = ' + String(error.toFixed(2)),
+                titleTextStyle: {
+                    fontSize: 16, 
+                },
+                
+                //Chart properties
                 chartArea: {
+                    // left: 100,   // The left, height, and width will dictate how big the chart is in comparison to the overall plot
+                    width: 500,
+                    // height: 300,
                     backgroundColor: {
+                        fill:'white',
                         stroke: 'black',
                         strokeWidth: 2 // Thickness of border
                     }
                 },
+
+                // x axis properties
                 hAxis: {
                   title: 'x values',
+                  textStyle : {
+                      fontSize: 14 // X axis numbers size
+                  },
+                  titleTextStyle: {
+                    fontSize: 16, // X AXIS FONT SIZE
+                  },
                   viewWindow: {
                       min: xmin,
                       max: xmax
                       }
                 },
+
+                //y axis properties
                 vAxis: {
-                  title: 'y values'
+                  title: 'y values',
+                  textStyle : {
+                      fontSize: 14 // Y axis numbers size
+                  },
+                  titleTextStyle: {
+                    fontSize: 16, // Y AXIS FONT SIZE
+                  },
                 },
-                baselineColor: 'transparent', //Remove the bolded x and y axes
-                colors: ['#0072BD','red','green'],
-                title: 'Simple Linear Regression: m = ' + String(m) + ', b = ' + String(b) + ', total error = ' + String(error.toFixed(2)),
-                width:800,
-                height:400,
+
+                //Legend properties
+                legend: {position: 'right', 
+                         textStyle: {fontSize: 14},
+                         alignment: 'center' ,
+                         orientation: 'vertical',}
             }
           
             var chart = new google.visualization.LineChart(document.getElementById('chart_div'));
@@ -147,16 +230,20 @@ author_profile: true
                 <!--Divs that will hold each control and chart-->
                 <!-- <div id="slider_div"></div> -->
                 <div id="chart_div"></div>
-                <div> 
+                <div><form>
                     <td>$m=$</td>
-                    <td><input id="m_numbox", TYPE="RANGE", NAME="m", SIZE="7", 
-                            VALUE="0.5", STEP="0.1", MIN="-5",  MAX="5", ONCHANGE="drawDashboard()"></td>
-                </div>
-                <div> 
+                    <td><input id="mSlider", TYPE="RANGE", NAME="mSlider", SIZE="7", class="slider", 
+                            VALUE="0.5", STEP="0.1", MIN="-5",  MAX="5", oninput="this.form.mBox.value=this.value; drawDashboard()"></td>
+                	<td><input id="mBox", type="number", name="mBox", SIZE="20", class="button",
+                            VALUE="0.5", STEP="0.1", MIN="-5",  MAX="5", oninput="this.form.mSlider.value=this.value; drawDashboard()" /></td>
+                </div></form>
+                <div><form>
                     <td>$b=$</td>
-                    <td><input id="b_numbox", TYPE="RANGE", NAME="b", SIZE="7", 
-                            VALUE="0", STEP="0.1", MIN="-5", MAX="5", ONCHANGE="drawDashboard()"></td>
-                </div>
+                    <td><input id="bSlider", TYPE="RANGE", NAME="bSlider", SIZE="7", class="slider", 
+                            VALUE="-0.5", STEP="0.1", MIN="-5", MAX="5", oninput="this.form.bBox.value=this.value; drawDashboard()">
+                    <input id="bBox", type="number", name="bBox", SIZE="20", class="button",
+                            VALUE="-0.5", STEP="0.1", MIN="-5", MAX="5", oninput="this.form.bSlider.value=this.value; drawDashboard()" /></td>
+                </div></form>
             </center>
         </div>
     </body>
