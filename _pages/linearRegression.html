@@ -1,0 +1,250 @@
+---
+layout: archive
+title: "linearRegression"
+permalink: /linearRegression/
+author_profile: true
+---
+
+{% include base_path %}
+
+
+<html>
+    <head>
+        <style>
+            /* The font size of the numbers */
+            input[type="number"]
+            {
+                font-size:16px;
+            }
+            
+            /* The sliders */
+            .slider {
+              -webkit-appearance: none;
+              width: 50%;
+              height: 10px;
+              border-radius: 2px;  
+              background: #d3d3d3; /*Bar color*/
+              outline: none;
+              opacity: 0.7;
+              -webkit-transition: .2s;
+              transition: opacity .2s;
+            }
+            
+            /* The buttons */
+            .button {
+              width: 10%;
+            }
+            
+            /* Mouse-over effects */
+            .slider::-webkit-slider-thumb {
+              -webkit-appearance: none;
+              appearance: none;
+              width: 25px;
+              height: 25px;
+              border-radius: 50%; 
+              background: #0072BD; /*Dot color*/
+              cursor: pointer;
+            }
+
+            /* The slider handle (use -webkit- (Chrome, Opera, Safari, Edge) and -moz- (Firefox) to override default look) */
+            .slider::-moz-range-thumb {
+              width: 25px;
+              height: 25px;
+              border-radius: 50%;
+              background: #0072BD; /*Dot color*/
+              cursor: pointer;
+            }
+        </style>
+        
+        <!-- Some useful links: -->
+        <!-- https://developers-dot-devsite-v2-prod.appspot.com/chart/interactive/docs/gallery/scatterchart -->
+        <!-- https://developers-dot-devsite-v2-prod.appspot.com/chart/interactive/docs/gallery/linechart -->
+        <!-- https://stackoverflow.com/questions/55418655/how-to-plot-scatter-plot-and-line-graph-on-same-graph-using-google-charts -->
+        <!-- https://stackoverflow.com/questions/42891409/draw-a-line-on-google-charts-scatterchart -->
+        
+        <!-- Load libraries -->  
+        <script type="text/javascript" src="https://www.google.com/jsapi"></script>
+        <script type="text/x-mathjax-config">
+            MathJax.Hub.Config({tex2jax: {inlineMath: [['$','$'], ['\\(','\\)']]}});
+        </script> 
+        <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML.js"></script>      
+        <script type="text/javascript">
+
+        // Load the Visualization API and the controls package.
+        google.charts.load('current', {'packages':['corechart', 'controls']});
+        
+        // Set a callback to run when the Google Visualization API is loaded.
+        google.charts.setOnLoadCallback(drawDashboard);
+        
+        // Static elements of the plot
+        let xmin = 0.001;
+        let xmax = 6.5;
+        
+        //The fucntion that draws everything
+        function drawDashboard() {
+            //Variables drawn from text fields
+            let m = parseFloat(document.getElementById('mBox').value);
+            let b = parseFloat(document.getElementById('bBox').value);
+            
+            // Create the scatter plot data
+            var data = new google.visualization.DataTable();
+            data.addColumn('number', 'x');
+            data.addColumn('number', 'Data');
+            data.addColumn('number', 'Residuals');
+            data.addColumn('number', 'Estimate mx+b');
+            data.addRows([[0.0, 2.76, 2.76, m*0.0+b], [0.0, 2.76, m*0.0+b, m*0.0+b], [0.0, 2.76, , m*0.0+b],
+                    [0.13, 1.66, 1.66, m*0.13+b], [0.13, 1.66, m*0.13+b, m*0.13+b], [0.13, 1.66, , m*0.13+b],
+                    [0.26, 2.49, 2.49, m*0.26+b], [0.26, 2.49, m*0.26+b, m*0.26+b], [0.26, 2.49, , m*0.26+b],
+                    [0.38, 4.01, 4.01, m*0.38+b], [0.38, 4.01, m*0.38+b, m*0.38+b], [0.38, 4.01, , m*0.38+b],
+                    [0.51, 3.89, 3.89, m*0.51+b], [0.51, 3.89, m*0.51+b, m*0.51+b], [0.51, 3.89, , m*0.51+b],
+                    [0.64, 1.31, 1.31, m*0.64+b], [0.64, 1.31, m*0.64+b, m*0.64+b], [0.64, 1.31, , m*0.64+b],
+                    [0.77, 3.49, 3.49, m*0.77+b], [0.77, 3.49, m*0.77+b, m*0.77+b], [0.77, 3.49, , m*0.77+b],
+                    [0.9, 2.64, 2.64, m*0.9+b], [0.9, 2.64, m*0.9+b, m*0.9+b], [0.9, 2.64, , m*0.9+b],
+                    [1.03, 2.95, 2.95, m*1.03+b], [1.03, 2.95, m*1.03+b, m*1.03+b], [1.03, 2.95, , m*1.03+b],
+                    [1.15, 3.72, 3.72, m*1.15+b], [1.15, 3.72, m*1.15+b, m*1.15+b], [1.15, 3.72, , m*1.15+b],
+                    [1.28, 3.71, 3.71, m*1.28+b], [1.28, 3.71, m*1.28+b, m*1.28+b], [1.28, 3.71, , m*1.28+b],
+                    [1.41, 5.28, 5.28, m*1.41+b], [1.41, 5.28, m*1.41+b, m*1.41+b], [1.41, 5.28, , m*1.41+b],
+                    [1.54, 4.84, 4.84, m*1.54+b], [1.54, 4.84, m*1.54+b, m*1.54+b], [1.54, 4.84, , m*1.54+b],
+                    [1.67, 4.46, 4.46, m*1.67+b], [1.67, 4.46, m*1.67+b, m*1.67+b], [1.67, 4.46, , m*1.67+b],
+                    [1.8, 5.03, 5.03, m*1.8+b], [1.8, 5.03, m*1.8+b, m*1.8+b], [1.8, 5.03, , m*1.8+b],
+                    [1.92, 5.18, 5.18, m*1.92+b], [1.92, 5.18, m*1.92+b, m*1.92+b], [1.92, 5.18, , m*1.92+b],
+                    [2.05, 6.6, 6.6, m*2.05+b], [2.05, 6.6, m*2.05+b, m*2.05+b], [2.05, 6.6, , m*2.05+b],
+                    [2.18, 5.15, 5.15, m*2.18+b], [2.18, 5.15, m*2.18+b, m*2.18+b], [2.18, 5.15, , m*2.18+b],
+                    [2.31, 5.93, 5.93, m*2.31+b], [2.31, 5.93, m*2.31+b, m*2.31+b], [2.31, 5.93, , m*2.31+b],
+                    [2.44, 5.02, 5.02, m*2.44+b], [2.44, 5.02, m*2.44+b, m*2.44+b], [2.44, 5.02, , m*2.44+b],
+                    [2.56, 3.58, 3.58, m*2.56+b], [2.56, 3.58, m*2.56+b, m*2.56+b], [2.56, 3.58, , m*2.56+b],
+                    [2.69, 7.04, 7.04, m*2.69+b], [2.69, 7.04, m*2.69+b, m*2.69+b], [2.69, 7.04, , m*2.69+b],
+                    [2.82, 7.51, 7.51, m*2.82+b], [2.82, 7.51, m*2.82+b, m*2.82+b], [2.82, 7.51, , m*2.82+b],
+                    [2.95, 6.16, 6.16, m*2.95+b], [2.95, 6.16, m*2.95+b, m*2.95+b], [2.95, 6.16, , m*2.95+b],
+                    [3.08, 9.42, 9.42, m*3.08+b], [3.08, 9.42, m*3.08+b, m*3.08+b], [3.08, 9.42, , m*3.08+b],
+                    [3.21, 5.96, 5.96, m*3.21+b], [3.21, 5.96, m*3.21+b, m*3.21+b], [3.21, 5.96, , m*3.21+b],
+                    [3.33, 7.71, 7.71, m*3.33+b], [3.33, 7.71, m*3.33+b, m*3.33+b], [3.33, 7.71, , m*3.33+b],
+                    [3.46, 7.74, 7.74, m*3.46+b], [3.46, 7.74, m*3.46+b, m*3.46+b], [3.46, 7.74, , m*3.46+b],
+                    [3.59, 9.71, 9.71, m*3.59+b], [3.59, 9.71, m*3.59+b, m*3.59+b], [3.59, 9.71, , m*3.59+b],
+                    [3.72, 9.91, 9.91, m*3.72+b], [3.72, 9.91, m*3.72+b, m*3.72+b], [3.72, 9.91, , m*3.72+b],
+                    [3.85, 8.85, 8.85, m*3.85+b], [3.85, 8.85, m*3.85+b, m*3.85+b], [3.85, 8.85, , m*3.85+b],
+                    [3.98, 9.33, 9.33, m*3.98+b], [3.98, 9.33, m*3.98+b, m*3.98+b], [3.98, 9.33, , m*3.98+b],
+                    [4.1, 8.32, 8.32, m*4.1+b], [4.1, 8.32, m*4.1+b, m*4.1+b], [4.1, 8.32, , m*4.1+b],
+                    [4.23, 7.48, 7.48, m*4.23+b], [4.23, 7.48, m*4.23+b, m*4.23+b], [4.23, 7.48, , m*4.23+b],
+                    [4.36, 9.37, 9.37, m*4.36+b], [4.36, 9.37, m*4.36+b, m*4.36+b], [4.36, 9.37, , m*4.36+b],
+                    [4.49, 10.13, 10.13, m*4.49+b], [4.49, 10.13, m*4.49+b, m*4.49+b], [4.49, 10.13, , m*4.49+b],
+                    [4.62, 11.46, 11.46, m*4.62+b], [4.62, 11.46, m*4.62+b, m*4.62+b], [4.62, 11.46, , m*4.62+b],
+                    [4.74, 11.69, 11.69, m*4.74+b], [4.74, 11.69, m*4.74+b, m*4.74+b], [4.74, 11.69, , m*4.74+b],
+                    [4.87, 10.36, 10.36, m*4.87+b], [4.87, 10.36, m*4.87+b, m*4.87+b], [4.87, 10.36, , m*4.87+b],
+                    [5.0, 10.7, 10.7, m*5.0+b], [5.0, 10.7, m*5.0+b, m*5.0+b], [5.0, 10.7, , m*5.0+b],
+                    [5.13, 10.21, 10.21, m*5.13+b], [5.13, 10.21, m*5.13+b, m*5.13+b], [5.13, 10.21, , m*5.13+b],
+                    [5.26, 10.09, 10.09, m*5.26+b], [5.26, 10.09, m*5.26+b, m*5.26+b], [5.26, 10.09, , m*5.26+b],
+                    [5.39, 10.06, 10.06, m*5.39+b], [5.39, 10.06, m*5.39+b, m*5.39+b], [5.39, 10.06, , m*5.39+b],
+                    [5.51, 13.98, 13.98, m*5.51+b], [5.51, 13.98, m*5.51+b, m*5.51+b], [5.51, 13.98, , m*5.51+b],
+                    [5.64, 11.77, 11.77, m*5.64+b], [5.64, 11.77, m*5.64+b, m*5.64+b], [5.64, 11.77, , m*5.64+b],
+                    [5.77, 12.1, 12.1, m*5.77+b], [5.77, 12.1, m*5.77+b, m*5.77+b], [5.77, 12.1, , m*5.77+b],
+                    [5.9, 11.54, 11.54, m*5.9+b], [5.9, 11.54, m*5.9+b, m*5.9+b], [5.9, 11.54, , m*5.9+b],
+                    [6.03, 13.83, 13.83, m*6.03+b], [6.03, 13.83, m*6.03+b, m*6.03+b], [6.03, 13.83, , m*6.03+b],
+                    [6.15, 11.7, 11.7, m*6.15+b], [6.15, 11.7, m*6.15+b, m*6.15+b], [6.15, 11.7, , m*6.15+b],
+                    [6.28, 13.35, 13.35, m*6.28+b], [6.28, 13.35, m*6.28+b, m*6.28+b], [6.28, 13.35, , m*6.28+b]]);
+          
+            // Calculate error
+            let error = 0;
+            for (var i = 0; i < data.getNumberOfRows(); i++) {
+                error = error + Math.abs( data.getValue(i,1) - data.getValue(i,3) ) / data.getNumberOfRows();
+              }
+                
+            // Formatting
+            let lineWidth=3; //linewidth for line plots
+            var options = {
+                // Plot types
+                series: {0: {type: 'scatter'}, 
+                         1: {type: 'line', lineWidth:lineWidth}, 
+                         2: {type: 'line', lineWidth:lineWidth}},
+                colors: ['#0072BD','red','green'],
+
+                //Canvas properties
+                backgroundColor: 'transparent',
+                baselineColor: 'transparent', //Remove the bolded x and y axes
+                width:800,
+                height:500,
+
+                //Title
+                title: 'Simple Linear Regression: m = ' + String(m) + ', b = ' + String(b) + ', total error = ' + String(error.toFixed(2)),
+                titleTextStyle: {
+                    fontSize: 16, 
+                },
+                
+                //Chart properties
+                chartArea: {
+                    // left: 100,   // The left, height, and width will dictate how big the chart is in comparison to the overall plot
+                    width: 500,
+                    // height: 300,
+                    backgroundColor: {
+                        fill:'white',
+                        stroke: 'black',
+                        strokeWidth: 2 // Thickness of border
+                    }
+                },
+
+                // x axis properties
+                hAxis: {
+                  title: 'x values',
+                  textStyle : {
+                      fontSize: 14 // X axis numbers size
+                  },
+                  titleTextStyle: {
+                    fontSize: 16, // X AXIS FONT SIZE
+                  },
+                  viewWindow: {
+                      min: xmin,
+                      max: xmax
+                      }
+                },
+
+                //y axis properties
+                vAxis: {
+                  title: 'y values',
+                  textStyle : {
+                      fontSize: 14 // Y axis numbers size
+                  },
+                  titleTextStyle: {
+                    fontSize: 16, // Y AXIS FONT SIZE
+                  },
+                },
+
+                //Legend properties
+                legend: {position: 'right', 
+                         textStyle: {fontSize: 14},
+                         alignment: 'center' ,
+                         orientation: 'vertical',}
+            }
+          
+            var chart = new google.visualization.LineChart(document.getElementById('chart_div'));
+          
+            // dashboard.bind(chart)
+            chart.draw(data, options)
+        }
+        </script>
+    </head>
+
+    <body>
+        <!--Div that will hold the dashboard-->
+        <div id="dashboard_div">
+            <center>
+                <!--Divs that will hold each control and chart-->
+                <!-- <div id="slider_div"></div> -->
+                <div id="chart_div"></div>
+                <div><form>
+                    <td>$m=$</td>
+                    <td><input id="mSlider", TYPE="RANGE", NAME="mSlider", SIZE="7", class="slider", 
+                            VALUE="0.5", STEP="0.1", MIN="-5",  MAX="5", oninput="this.form.mBox.value=this.value; drawDashboard()"></td>
+                	<td><input id="mBox", type="number", name="mBox", SIZE="20", class="button",
+                            VALUE="0.5", STEP="0.1", MIN="-5",  MAX="5", oninput="this.form.mSlider.value=this.value; drawDashboard()" /></td>
+                </div></form>
+                <div><form>
+                    <td>$b=$</td>
+                    <td><input id="bSlider", TYPE="RANGE", NAME="bSlider", SIZE="7", class="slider", 
+                            VALUE="-0.5", STEP="0.1", MIN="-5", MAX="5", oninput="this.form.bBox.value=this.value; drawDashboard()">
+                    <input id="bBox", type="number", name="bBox", SIZE="20", class="button",
+                            VALUE="-0.5", STEP="0.1", MIN="-5", MAX="5", oninput="this.form.bSlider.value=this.value; drawDashboard()" /></td>
+                </div></form>
+            </center>
+        </div>
+    </body>
+</html>
