@@ -191,11 +191,11 @@ author_profile: true
                          textStyle: {fontSize: 14},
                          alignment: 'center' ,
                          orientation: 'vertical',}
-            }
+            };
           
             var chart = new google.visualization.LineChart(document.getElementById('chart_div'));
           
-            chart.draw(data, options)
+            chart.draw(data, options);
         }
             
         google.charts.setOnLoadCallback(drawDashboard);
