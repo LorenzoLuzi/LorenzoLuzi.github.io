@@ -68,7 +68,6 @@ author_profile: true
         
         
         google.charts.load('current', {'packages':['corechart', 'controls']});
-        google.charts.setOnLoadCallback(drawDashboard);
         
         let xmin = 0.001;
         let xmax = 6.5;
@@ -198,6 +197,8 @@ author_profile: true
           
             chart.draw(data, options)
         }
+            
+        google.charts.setOnLoadCallback(drawDashboard);
         </script>
     </head>
 
