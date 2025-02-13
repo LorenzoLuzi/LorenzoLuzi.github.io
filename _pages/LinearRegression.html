@@ -67,22 +67,16 @@ author_profile: true
         <script type="text/javascript">
         
         
-        google.charts.load('current', {'packages':['corechart', 'controls']}); // Load the Visualization API and the controls package.
-        
-        // Set a callback to run when the Google Visualization API is loaded.
+        google.charts.load('current', {'packages':['corechart', 'controls']});
         google.charts.setOnLoadCallback(drawDashboard);
         
-        // Static elements of the plot
         let xmin = 0.001;
         let xmax = 6.5;
         
-        //The fucntion that draws everything
         function drawDashboard() {
-            //Variables drawn from text fields
             let m = parseFloat(document.getElementById('mBox').value);
             let b = parseFloat(document.getElementById('bBox').value);
             
-            // Create the scatter plot data
             var data = new google.visualization.DataTable();
             data.addColumn('number', 'x');
             data.addColumn('number', 'Data');
@@ -139,53 +133,44 @@ author_profile: true
                     [6.15, 11.7, 11.7, m*6.15+b], [6.15, 11.7, m*6.15+b, m*6.15+b], [6.15, 11.7, , m*6.15+b],
                     [6.28, 13.35, 13.35, m*6.28+b], [6.28, 13.35, m*6.28+b, m*6.28+b], [6.28, 13.35, , m*6.28+b]]);
           
-            // Calculate error
             let error = 0;
             for (var i = 0; i < data.getNumberOfRows(); i++) {
                 error = error + Math.abs( data.getValue(i,1) - data.getValue(i,3) ) / data.getNumberOfRows();
               }
                 
-            // Formatting
-            let lineWidth=3; //linewidth for line plots
+            let lineWidth=3;
             var options = {
-                // Plot types
                 series: {0: {type: 'scatter'}, 
                          1: {type: 'line', lineWidth:lineWidth}, 
                          2: {type: 'line', lineWidth:lineWidth}},
                 colors: ['#0072BD','red','green'],
 
-                //Canvas properties
                 backgroundColor: 'transparent',
-                baselineColor: 'transparent', //Remove the bolded x and y axes
+                baselineColor: 'transparent', 
                 width:800,
                 height:500,
 
-                //Title
                 title: 'Simple Linear Regression: m = ' + String(m) + ', b = ' + String(b) + ', total error = ' + String(error.toFixed(2)),
                 titleTextStyle: {
                     fontSize: 16, 
                 },
                 
-                //Chart properties
                 chartArea: {
-                    // left: 100,   // The left, height, and width will dictate how big the chart is in comparison to the overall plot
                     width: 500,
-                    // height: 300,
                     backgroundColor: {
                         fill:'white',
                         stroke: 'black',
-                        strokeWidth: 2 // Thickness of border
+                        strokeWidth: 2 
                     }
                 },
 
-                // x axis properties
                 hAxis: {
                   title: 'x values',
                   textStyle : {
-                      fontSize: 14 // X axis numbers size
+                      fontSize: 14 
                   },
                   titleTextStyle: {
-                    fontSize: 16, // X AXIS FONT SIZE
+                    fontSize: 16, 
                   },
                   viewWindow: {
                       min: xmin,
@@ -193,18 +178,16 @@ author_profile: true
                       }
                 },
 
-                //y axis properties
                 vAxis: {
                   title: 'y values',
                   textStyle : {
-                      fontSize: 14 // Y axis numbers size
+                      fontSize: 14 
                   },
                   titleTextStyle: {
-                    fontSize: 16, // Y AXIS FONT SIZE
+                    fontSize: 16, 
                   },
                 },
 
-                //Legend properties
                 legend: {position: 'right', 
                          textStyle: {fontSize: 14},
                          alignment: 'center' ,
@@ -213,7 +196,6 @@ author_profile: true
           
             var chart = new google.visualization.LineChart(document.getElementById('chart_div'));
           
-            // dashboard.bind(chart)
             chart.draw(data, options)
         }
         </script>
