@@ -82,7 +82,7 @@ analytics:
 author:
   name             : "Lorenzo Luzi"
   avatar           : "me.jpg"
-  bio              : "Your biography for the left-hand sidebar"
+  bio              : "Assistant Teaching Professor in the Department of Statistics and the Data to Knowledge Lab, Rice University"
   location         : "Houston, TX"
   employer         : "Rice University"
   pubmed           : 
@@ -181,12 +181,12 @@ collections:
   publications:
     output: true
     permalink: /:collection/:path/
-  portfolio:
-    output: true
-    permalink: /:collection/:path/
-  talks:
-    output: true
-    permalink: /:collection/:path/
+  # portfolio:
+  #   output: true
+  #   permalink: /:collection/:path/
+  # talks:
+  #   output: true
+  #   permalink: /:collection/:path/
 
 
 # Defaults
