@@ -51,6 +51,19 @@ author_profile: true
               background: #0072BD; /*Dot color*/
               cursor: pointer;
             }
+
+            /* The style for the button */
+            .button2 {
+              /* border: none; */
+              /* color: white; */
+              padding: 15px 32px;
+              text-align: center;
+              /* text-decoration: none; */
+              /* display: inline-block; */
+              font-size: 16px;
+              margin: 4px 2px;
+              /* cursor: pointer; */
+            }
         </style>
         
         <!-- Some useful links: -->
@@ -76,7 +89,7 @@ author_profile: true
         // Static elements of the plot
         let xmin = 0.001;
         let xmax = 6.5;
-        
+            
         //The fucntion that draws everything
         function drawDashboard() {
             //Variables drawn from text fields
@@ -162,7 +175,7 @@ author_profile: true
                 height:500,
 
                 //Title
-                title: 'Simple Linear Regression: m = ' + String(m) + ', b = ' + String(b) + ', total error = ' + String(error.toFixed(2)),
+                title: 'Simple Linear Regression: m = ' + String(m.toFixed(2)) + ', b = ' + String(b.toFixed(2)) + ', total error = ' + String(error.toFixed(2)),
                 titleTextStyle: {
                     fontSize: 16, 
                 },
@@ -233,14 +246,25 @@ author_profile: true
                             VALUE="0.5", STEP="0.1", MIN="-5",  MAX="5", oninput="this.form.mBox.value=this.value; drawDashboard()"></td>
                 	<td><input id="mBox", type="number", name="mBox", SIZE="20", class="button",
                             VALUE="0.5", STEP="0.1", MIN="-5",  MAX="5", oninput="this.form.mSlider.value=this.value; drawDashboard()" /></td>
-                </div></form>
-                <div><form>
+                </div>
+                <div>
                     <td>$b=$</td>
                     <td><input id="bSlider", TYPE="RANGE", NAME="bSlider", SIZE="7", class="slider", 
                             VALUE="-0.5", STEP="0.1", MIN="-5", MAX="5", oninput="this.form.bBox.value=this.value; drawDashboard()">
                     <input id="bBox", type="number", name="bBox", SIZE="20", class="button",
                             VALUE="-0.5", STEP="0.1", MIN="-5", MAX="5", oninput="this.form.bSlider.value=this.value; drawDashboard()" /></td>
-                </div></form>
+                </div>
+            
+                <div><button id="optimal", TYPE="BUTTON", NAME="optimal", class="button2", 
+                        onclick="  
+                         this.form.bBox.value=1.8463705188081931;
+                         this.form.bSlider.value=1.8463705188081931; 
+                         this.form.mBox.value=1.7753333024609068;
+                         this.form.mSlider.value=1.7753333024609068;
+                         drawDashboard();">
+                    Solution!</button>
+                </div>
+                </form>
             </center>
         </div>
     </body>
