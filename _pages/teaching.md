@@ -11,6 +11,10 @@ author_profile: true
   {% include archive-single.html %}
 {% endfor %}
 
+## Summer 2025
+- DSCI 101 - INTRO TO DATA SCIENCE
+  - This course teaching the basics of data science. This is a non-calculus based course with no prior background in statistics or programming required.
+  - Online; 6 students
 
 ## Spring 2025
 
