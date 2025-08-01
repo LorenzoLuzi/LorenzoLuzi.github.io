@@ -1,3 +1,6 @@
 _site/
 Gemfile.lock
 .ipynb_checkpoints
+markdown_generator/.ipynb_checkpoints
+.bundle
+vendor
