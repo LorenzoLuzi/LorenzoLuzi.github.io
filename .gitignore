@@ -4,3 +4,4 @@ Gemfile.lock
 markdown_generator/.ipynb_checkpoints
 .bundle
 vendor
+.DS_Store
