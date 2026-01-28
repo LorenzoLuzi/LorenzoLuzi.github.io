@@ -1,0 +1,149 @@
+<!-- Source: https://d3-graph-gallery.com/graph/scatter_basic.html -->
+<!-- D3 book: https://aspoerri.comminfo.rutgers.edu/Teaching/InfoVisOnline/Resources/d3/Interactive_Data_Visualization_for_the_Web.pdf -->
+
+<html>
+    <head>
+        <style>
+            /* The font size of the numbers */
+            input[type="number"]
+            {
+                font-size:16px;
+            }
+            
+            /* The sliders */
+            .slider {
+              -webkit-appearance: none;
+              width: 40%;
+              height: 10px;
+              border-radius: 2px;  
+              background: #d3d3d3; /*Bar color*/
+              outline: none;
+              opacity: 0.7;
+              -webkit-transition: .2s;
+              transition: opacity .2s;
+            }
+            
+            /* The buttons */
+            .button {
+              width: 7%;
+            }
+            
+            /* Mouse-over effects */
+            .slider::-webkit-slider-thumb {
+              -webkit-appearance: none;
+              appearance: none;
+              width: 25px;
+              height: 25px;
+              border-radius: 50%; 
+              background: #0072BD; /*Dot color*/
+              cursor: pointer;
+            }
+
+            /* The slider handle (use -webkit- (Chrome, Opera, Safari, Edge) and -moz- (Firefox) to override default look) */
+            .slider::-moz-range-thumb {
+              width: 25px;
+              height: 25px;
+              border-radius: 50%;
+              background: #0072BD; /*Dot color*/
+              cursor: pointer;
+            }
+
+            /* The style for the button */
+            .button2 {
+              /* border: none; */
+              /* color: white; */
+              padding: 15px 32px;
+              text-align: center;
+              /* text-decoration: none; */
+              /* display: inline-block; */
+              font-size: 16px;
+              margin: 4px 2px;
+              /* cursor: pointer; */
+            }
+            #plots {
+                display: flex;
+                justify-content: center; 
+                gap: 20px; 
+                width: 100%;
+                margin-top: 20px;
+            }
+            .plot-wrapper {
+                width: 600px;
+                display: flex;
+                flex-direction: column; 
+                align-items: center;
+            }
+            #myplot1 {
+              width: 600px;
+              height: 450px;   
+            }
+            #myplot2 {
+              width: 600px;
+              height: 450px;
+            }
+        </style>
+
+        <!-- Load libraries -->  
+        <script src="https://www.x3dom.org/download/x3dom.js"></script>
+        <link rel="stylesheet" href="https://www.x3dom.org/download/x3dom.css">
+        <script src="https://d3js.org/d3.v7.js"></script>
+        <script src="https://d3js.org/d3-random.v1.min.js"></script>
+        <script type="text/x-mathjax-config">MathJax.Hub.Config({tex2jax: {inlineMath: [['$','$'], ['\\(','\\)']]}});</script> 
+        <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML.js"></script>  
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.1/math.min.js"></script>
+        <script src="../scripts/plottingFunctions.js"></script> 
+        <script src="../scripts/twoDimensions.js"></script> 
+        <script src="../scripts/threeDimensions.js"></script>
+        <script src="../scripts/plotKNN2D.js"></script>   
+
+    </head>
+
+    <body onload="plotKNN2D();">
+
+    <!-- Create a div where the graph will take place -->
+    
+    <div id="plots">
+      <!-- Create the 3D plots -->
+      <div id="wrapper1" class="plot-wrapper">
+        <x3d id="myplot1">
+            <scene>
+                <Viewpoint position="3 10 20" centerOfRotation="0 0 0" orientation="1 0 0 -0.5"></Viewpoint>
+            </scene>
+          </x3d>
+      </div>
+
+      <div id="wrapper2" class="plot-wrapper">
+          <x3d id="myplot2">
+              <scene>
+                  <Viewpoint position="3 10 20" centerOfRotation="0 0 0" orientation="1 0 0 -0.5"></Viewpoint>
+              </scene>
+          </x3d>
+      </div>
+    </div>
+        
+      <center>
+        <div>
+        <!-- Create the sliders -->
+        <form>
+            <td>$k=$</td>
+            <td><input id="kSlider", type="range", name="kSlider", size="7", class="slider", 
+                    value="1", step="1", min="1",  max="50", oninput="this.form.kBox.value=this.value; plotKNN2D()"></td>
+            <td><input id="kBox", type="number", name="kBox", size="20", class="button",
+                    value="1", step="1", min="1",  max="50", oninput="this.form.kSlider.value=this.value; plotKNN2D()" /></td>
+        </div>
+        <div>
+            <td>$n=$</td>
+            <td><input id="nSlider", type="range", name="nSlider", size="7", class="slider", 
+                    value="50", step="1", min="10", max="200", oninput="this.form.nBox.value=this.value; plotKNN2D()">
+            <input id="nBox", type="number", name="nBox", size="20", class="button",
+                    value="50", step="1", min="10", max="100", oninput="this.form.nBox.value=this.value; plotKNN2D()" /></td>
+        </div>
+        </div>
+        </form>
+    </center>
+
+    </body>
+
+
+
+</html>

@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>3D Plot - Centered</title>
+    
+    <script src="https://www.x3dom.org/download/x3dom.js"></script>
+    <link rel="stylesheet" href="https://www.x3dom.org/download/x3dom.css">
+    
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    
+    <script type="text/x-mathjax-config">
+        MathJax.Hub.Config({tex2jax: {inlineMath: [['$','$'], ['\\(','\\)']]}});
+    </script>
+    <script type="text/javascript" 
+            src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML.js">
+    </script>
+
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            font-family: Arial, sans-serif;
+            width: 100%;
+        }
+        x3d {
+            width: 600px;
+            height: 450px;
+            margin-left: 100px;
+            margin-bottom: 80px;
+        }
+        input[type="number"] { font-size: 16px; }
+        .slider { 
+            -webkit-appearance: none; 
+            width: 500px;
+            flex: 1; 
+            height: 10px; 
+            border-radius: 2px; 
+            background: #d3d3d3; 
+            outline: none; 
+            opacity: 0.7; 
+            -webkit-transition: .2s; 
+            transition: opacity .2s; }
+        .button {
+            width: 80px; 
+            padding: 5px;
+            text-align: center;
+            font-size: 16px;
+            vertical-align: middle;
+        }
+        .slider::-webkit-slider-thumb { 
+            -webkit-appearance: none; 
+            appearance: none; 
+            width: 25px; 
+            height: 25px; 
+            border-radius: 50%; 
+            background: #0072BD; 
+            cursor: pointer; }
+        .slider::-moz-range-thumb { 
+            width: 25px; 
+            height: 25px; 
+            border-radius: 50%; 
+            background: #0072BD; 
+            cursor: pointer; }
+        .button2 { 
+            padding: 15px 32px; 
+            text-align: center; 
+            font-size: 16px; 
+            margin: 4px 2px; 
+            cursor: pointer; 
+        }
+    </style>
+
+    <script src="https://d3js.org/d3.v7.js"></script>
+    <script src="https://d3js.org/d3-random.v1.min.js"></script>
+    <script type="text/x-mathjax-config">MathJax.Hub.Config({tex2jax: {inlineMath: [['$','$'], ['\\(','\\)']]}});</script> 
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML.js"></script>  
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.1/math.min.js"></script>
+    <script src="../scripts/plottingFunctions.js"></script> 
+    <script src="../scripts/threeDimensions.js"></script>
+    <script src="../scripts/plotMultilinearRegression.js"></script>
+</head>
+<body onload="plotMultilinearRegression()">
+    <!-- Create the 3D plot -->
+    <x3d id="myplot">
+        <scene>
+            <Viewpoint position="3 10 20" centerOfRotation="0 0 0" orientation="1 0 0 -0.5"></Viewpoint>
+        </scene>
+    </x3d>
+    
+    <center>
+        <div>
+        <!-- Create the sliders -->
+        <form>
+            <td>$c_2=$</td>
+            <td><input id="c2Slider", type="range", name="c2Slider", size="7", class="slider", 
+                    value="0.5", step="0.1", min="-5",  max="5", oninput="this.form.c2Box.value=this.value; plotMultilinearRegression()"></td>
+            <td><input id="c2Box", type="number", name="c2Box", size="20", class="button",
+                    value="0.5", step="0.1", min="-5",  max="5", oninput="this.form.c2Slider.value=this.value; plotMultilinearRegression()" /></td>
+        </div>
+        <div>
+            <td>$c_1=$</td>
+            <td><input id="c1Slider", type="range", name="c1Slider", size="7", class="slider", 
+                    value="-0.5", step="0.1", min="-5", max="5", oninput="this.form.c1Box.value=this.value; plotMultilinearRegression()">
+            <input id="c1Box", type="number", name="c1Box", size="20", class="button",
+                    value="-0.5", step="0.1", min="-5", max="5", oninput="this.form.c1Slider.value=this.value; plotMultilinearRegression()" /></td>
+        </div>
+        <div>
+            <td>$b=$</td>
+            <td><input id="bSlider", type="range", name="bSlider", size="7", class="slider", 
+                    value="-0.5", step="0.1", min="-5", max="5", oninput="this.form.bBox.value=this.value; plotMultilinearRegression()">
+            <input id="bBox", type="number", name="bBox", size="20", class="button",
+                    value="-0.5", step="0.1", min="-5", max="5", oninput="this.form.bSlider.value=this.value; plotMultilinearRegression()" /></td>
+        </div>
+    
+        <!-- Create the solve button -->
+        <div><button id="optimal", type="button", name="optimal", class="button2", 
+                onclick="  
+                    solveRegression();
+                    plotMultilinearRegression();">
+            Solution!</button>
+        </div>
+        </form>
+    </center>
+
+</body>
+</html>

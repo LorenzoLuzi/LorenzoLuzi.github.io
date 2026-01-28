@@ -1,0 +1,121 @@
+<!-- Source: https://d3-graph-gallery.com/graph/scatter_basic.html -->
+<!-- D3 book: https://aspoerri.comminfo.rutgers.edu/Teaching/InfoVisOnline/Resources/d3/Interactive_Data_Visualization_for_the_Web.pdf -->
+
+<html>
+    <head>
+        <style>
+            /* The font size of the numbers */
+            input[type="number"]
+            {
+                font-size:16px;
+            }
+            
+            /* The sliders */
+            .slider {
+              -webkit-appearance: none;
+              width: 40%;
+              height: 10px;
+              border-radius: 2px;  
+              background: #d3d3d3; /*Bar color*/
+              outline: none;
+              opacity: 0.7;
+              -webkit-transition: .2s;
+              transition: opacity .2s;
+            }
+            
+            /* The buttons */
+            .button {
+              width: 7%;
+            }
+            
+            /* Mouse-over effects */
+            .slider::-webkit-slider-thumb {
+              -webkit-appearance: none;
+              appearance: none;
+              width: 25px;
+              height: 25px;
+              border-radius: 50%; 
+              background: #0072BD; /*Dot color*/
+              cursor: pointer;
+            }
+
+            /* The slider handle (use -webkit- (Chrome, Opera, Safari, Edge) and -moz- (Firefox) to override default look) */
+            .slider::-moz-range-thumb {
+              width: 25px;
+              height: 25px;
+              border-radius: 50%;
+              background: #0072BD; /*Dot color*/
+              cursor: pointer;
+            }
+
+            /* The style for the button */
+            .button2 {
+              /* border: none; */
+              /* color: white; */
+              padding: 15px 32px;
+              text-align: center;
+              /* text-decoration: none; */
+              /* display: inline-block; */
+              font-size: 16px;
+              margin: 4px 2px;
+              /* cursor: pointer; */
+            }
+        </style>
+
+        <!-- Load libraries -->  
+        <script src="https://d3js.org/d3.v7.js"></script>
+        <script src="https://d3js.org/d3-random.v1.min.js"></script>
+        <script type="text/x-mathjax-config">MathJax.Hub.Config({tex2jax: {inlineMath: [['$','$'], ['\\(','\\)']]}});</script> 
+        <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML.js"></script>  
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.1/math.min.js"></script>
+        <script src="../scripts/plottingFunctions.js"></script> 
+        <script src="../scripts/twoDimensions.js"></script> 
+        <script src="../scripts/plotSimplePolynomialRegression.js"></script>   
+
+    </head>
+
+    <body onload="plotSimplePolynomialRegression();">
+
+    <!-- Create a div where the graph will take place -->
+    <center>
+      <div id="myplot"></div>
+        
+        <div>
+        <!-- Create the sliders -->
+        <form>
+            <td>$c_2=$</td>
+            <td><input id="c2Slider", type="range", name="c2Slider", size="7", class="slider", 
+                    value="0.5", step="0.1", min="-5",  max="5", oninput="this.form.c2Box.value=this.value; plotSimplePolynomialRegression()"></td>
+            <td><input id="c2Box", type="number", name="c2Box", size="20", class="button",
+                    value="0.5", step="0.1", min="-5",  max="5", oninput="this.form.c2Slider.value=this.value; plotSimplePolynomialRegression()" /></td>
+        </div>
+        <div>
+            <td>$c_1=$</td>
+            <td><input id="c1Slider", type="range", name="c1Slider", size="7", class="slider", 
+                    value="-0.5", step="0.1", min="-5", max="5", oninput="this.form.c1Box.value=this.value; plot2()">
+            <input id="c1Box", type="number", name="c1Box", size="20", class="button",
+                    value="-0.5", step="0.1", min="-5", max="5", oninput="this.form.c1Slider.value=this.value; plotSimplePolynomialRegression()" /></td>
+        </div>
+        <div>
+            <td>$b=$</td>
+            <td><input id="bSlider", type="range", name="bSlider", size="7", class="slider", 
+                    value="-0.5", step="0.1", min="-5", max="5", oninput="this.form.bBox.value=this.value; plotSimplePolynomialRegression()">
+            <input id="bBox", type="number", name="bBox", size="20", class="button",
+                    value="-0.5", step="0.1", min="-5", max="5", oninput="this.form.bSlider.value=this.value; plotSimplePolynomialRegression()" /></td>
+        </div>
+    
+        <!-- Create the solution button -->
+        <div><button id="optimal", type="button", name="optimal", class="button2", 
+                onclick="  
+                    solveRegression();
+                    plotSimplePolynomialRegression();">
+            Solution!</button>
+        </div>
+        </form>
+    </center>
+
+    </body>
+
+
+
+</html>
