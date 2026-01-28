@@ -24,11 +24,11 @@ main:
   - title: "SLR"
     url: /slr2/
     
-  - title: "KNN 1D"
-    url: /knn1d/
+  - title: "PolyReg"
+    url: /poly-reg/
     
-  - title: "KNN 2D"
-    url: /knn2d/
+  - title: "MLR"
+    url: /mlr/
     
   - title: "LogReg 1D"
     url: /log-reg-1d/
@@ -36,8 +36,12 @@ main:
   - title: "LogReg 3D"
     url: /log-reg-3d/
     
-  - title: "MLR"
-    url: /mlr/
+  - title: "KNN 1D"
+    url: /knn1d/
     
-  - title: "PolyReg"
-    url: /poly-reg/
+  - title: "KNN 2D"
+    url: /knn2d/
+    
+  
+    
+  
