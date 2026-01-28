@@ -11,8 +11,21 @@ author_profile: true
   {% include archive-single.html %}
 {% endfor %}
 
+## Fall 2025
+- [DSCI 101 - INTRO TO DATA SCIENCE](https://courses.rice.edu/courses/courses/!SWKSCAT.cat?p_action=COURSE&p_term=202610&p_crn=12124)
+  - This course teaching the basics of data science. This is a non-calculus based course with no prior background in statistics or programming required.
+  - 57 students
+- [COMP 549 901 - DATA SCIENCE PROJECTS](https://courses.rice.edu/courses/courses/!SWKSCAT.cat?p_action=COURSE&p_term=202610&p_crn=13423)
+  - This is a capstone course for online masters students studying data science.
+  - Also cross-listed as [DSCI 535 901](https://courses.rice.edu/courses/courses/!SWKSCAT.cat?p_action=COURSE&p_term=202610&p_crn=13429)
+  - 20 students
+- [ELEC 631 - ADVANCED MACHINE LEARNING](https://courses.rice.edu/courses/courses/!SWKSCAT.cat?p_action=COURSE&p_term=202610&p_crn=13476)
+  - This course was a seminar and project course where students learned about generative AI and its applications in education. They then developed AI tools to assist peer tutoring.
+  - 13 students
+
+
 ## Summer 2025
-- DSCI 101 - INTRO TO DATA SCIENCE
+- [DSCI 101 - INTRO TO DATA SCIENCE](https://courses.rice.edu/courses/courses/!SWKSCAT.cat?p_action=COURSE&p_term=202530&p_crn=32141)
   - This course teaching the basics of data science. This is a non-calculus based course with no prior background in statistics or programming required.
   - Online; 6 students
 
