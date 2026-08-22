@@ -11,6 +11,11 @@ author_profile: true
   {% include archive-single.html %}
 {% endfor %}
 
+## Spring 2026
+- [DSCI 101 - INTRO TO DATA SCIENCE](https://courses.rice.edu/courses/courses/!SWKSCAT.cat?p_action=COURSE&p_term=202620&p_crn=22712)
+  - This course teaching the basics of data science. This is a non-calculus based course with no prior background in statistics or programming required.
+  - Two sectuons: 63 students + 17 students = 80 students total
+
 ## Fall 2025
 - [DSCI 101 - INTRO TO DATA SCIENCE](https://courses.rice.edu/courses/courses/!SWKSCAT.cat?p_action=COURSE&p_term=202610&p_crn=12124)
   - This course teaching the basics of data science. This is a non-calculus based course with no prior background in statistics or programming required.
