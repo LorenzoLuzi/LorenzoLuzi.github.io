@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bias&ndash;Variance Tradeoff &mdash; Ridge Polynomial Regression</title>
+  <link rel="stylesheet" href="../styling/global.css">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; color: #222; }
+    h1 { font-size: 24px; }
+    .gd-panels { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+    .gd-panel { }
+    .gd-panel h3 { font-size: 15px; font-weight: bold; margin: 0 0 4px 0; text-align: center; }
+    .gd-controls { margin: 18px 0; display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; }
+    .gd-controls fieldset { border: 1px solid #ccc; border-radius: 6px; padding: 10px 14px; }
+    .gd-controls legend { font-weight: bold; font-size: 13px; padding: 0 6px; }
+    .gd-row { margin: 6px 0; font-size: 14px; }
+    .gd-row label { display: inline-block; min-width: 90px; }
+    .gd-row input[type="range"] { vertical-align: middle; width: 220px; }
+    .gd-row output { font-variant-numeric: tabular-nums; min-width: 46px; display: inline-block; }
+    .gd-readout { font-variant-numeric: tabular-nums; }
+    .gd-eq { background: #f6f6f8; border: 1px solid #e0e0e6; border-radius: 6px;
+             padding: 12px 16px; margin-top: 8px; font-size: 15px; line-height: 1.9; max-width: 820px; }
+    .gd-eq .pen { background: #ffe9c7; padding: 1px 5px; border-radius: 4px; font-weight: bold; }
+    .gd-eq .muted { color: #999; }
+    .bv-legend { font-size: 13px; margin: 4px 0 0 0; }
+    .bv-legend span.key { display: inline-block; width: 12px; height: 12px; border-radius: 2px;
+                          margin: 0 4px 0 14px; vertical-align: middle; }
+    .bv-note { max-width: 880px; font-size: 14px; color: #444; }
+    sub { font-size: 0.75em; }
+  </style>
+
+  <!-- d3 (full bundle) -->
+  <script src="https://d3js.org/d3.v7.js"></script>
+  <!-- MathJax v3 for nicely typeset LaTeX equations (config BEFORE the library) -->
+  <script>window.MathJax = { tex: { inlineMath: [['\\(', '\\)'], ['$', '$']] }, svg: { fontCache: 'global' } };</script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+  <!-- shared, cached data loader -->
+  <script src="../scripts/dataLoader.js"></script>
+  <!-- shared, matrix-free regression engine (polyDesign / fitCD / lambdaGrid ...) -->
+  <script src="../scripts/regression.js"></script>
+
+  <script>
+  // ===========================================================================
+  // Bias-Variance tradeoff, illustrated by BOOTSTRAP resampling of a fixed
+  // degree-8 polynomial fit with RIDGE regularization. The model complexity
+  // knob is the regularization strength lambda:
+  //     LARGE lambda  -> heavy shrinkage -> HIGH bias, LOW variance (stiff fit)
+  //     SMALL lambda  -> little shrinkage -> LOW bias, HIGH variance (wiggly fit)
+  //
+  // Reference "true" function f(x): a ridge fit on the FULL dataset at the
+  // SMALLEST lambda in the grid (low bias). This is only an APPROXIMATION of the
+  // truth (stated honestly in the intro). sigma^2 (irreducible noise) is the
+  // residual variance of that reference fit.
+  //
+  // For each lambda we draw B bootstrap resamples (n indices with replacement,
+  // seeded RNG so the picture is stable), fit ridge on each, and evaluate every
+  // fitted curve on a grid of x. Per x:
+  //     meanFit(x) = average of the B fitted values
+  //     var(x)     = variance of the B fitted values        (-> Variance)
+  //     bias2(x)   = (meanFit(x) - f(x))^2                   (-> Bias^2)
+  // Aggregating (simple average over x):
+  //     Bias^2 = mean_x bias2(x),  Variance = mean_x var(x),
+  //     Total  = Bias^2 + Variance + sigma^2.
+  // ===========================================================================
+
+  // ---- fixed model / experiment settings ----
+  const DEG    = 8;     // polynomial degree (fixed; lambda is the complexity knob)
+  const NGRID  = 40;    // number of lambda values
+  const B       = 40;   // bootstrap resamples per lambda
+  const NX      = 80;   // x-grid points where curves are evaluated
+  const SEED    = 20240611;  // bootstrap RNG seed (stable picture)
+
+  // ---- raw data / global model state ----
+  let XS = [], YS = [];           // raw x, y (parallel arrays)
+  let DFULL = null;               // full-data design { Z, colMean, colSd, degree }
+  let GRID = [];                  // lambda grid, DESCENDING (GRID[0] = lambda_max)
+  let REF = { beta: [], b0: 0 };  // reference "true" fit (smallest lambda)
+  let SIGMA2 = 0;                 // irreducible noise estimate
+  let XG = [], FG = [];           // x-grid and reference f(x) on that grid
+  let DECOMP = [];                // [{lambda, bias2, variance, total}] aligned to GRID
+  let MINIDX = 0;                 // index of Total-minimizing lambda
+  let CURIDX = 0;                 // index of currently-selected lambda (slider)
+
+  // ---- panel geometry (mirrors the gradient-descent applet) ----
+  const Wp = 380, Hp = 320, M = { top: 16, right: 16, bottom: 46, left: 56 };
+
+  // ---- colors ----
+  const C = {
+    data:   "#3070B7",   // scatter points
+    boot:   "#9aa7b4",   // faint bootstrap curves
+    mean:   "#D55E00",   // average fit (bold)
+    truth:  "#377e22",   // reference "true" function f(x)
+    bias2:  "#D55E00",   // Bias^2 curve
+    varc:   "#0072BD",   // Variance curve
+    total:  "#111",      // Total curve
+    sigma:  "#999",      // sigma^2 floor
+    cur:    "#7a2fb0",   // current-lambda marker
+    best:   "#377e22"    // total-minimizing lambda marker
+  };
+
+  // d3 scales / persistent <g> handles (set in build)
+  let xS, yS;                                   // panel 1 (data space)
+  let lS, dS;                                   // panel 2 (lambda axis, error axis)
+  let gBoot, gFitMean, gTruth, gData;           // panel-1 dynamic layers
+  let gDecompCur;                               // panel-2 current-lambda marker layer
+
+  // ----------------------------------------------------------------- maths
+  function mean(a) { let s = 0; for (let i = 0; i < a.length; i++) s += a[i]; return s / a.length; }
+
+  // reference f(x) from the full-data low-lambda fit (uses full-data standardization)
+  function fAt(x) { return Reg.predictX(REF.beta, REF.b0, x, DFULL.colMean, DFULL.colSd); }
+
+  // seeded LCG so the bootstrap resamples are deterministic (stable visuals)
+  function makeRng(seed) {
+    let s = seed >>> 0;
+    return () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
+  }
+
+  // B bootstrap ridge fits at a given lambda, each evaluated on the x-grid XG.
+  // returns { curves: B x NX, meanCurve: NX } (meanCurve = average fit per x)
+  function bootstrapCurves(lambda) {
+    const n = XS.length;
+    const rng = makeRng(SEED);          // reset per lambda -> same resamples reused, stable
+    const curves = new Array(B);
+    for (let b = 0; b < B; b++) {
+      const bx = new Array(n), by = new Array(n);
+      for (let i = 0; i < n; i++) { const j = Math.floor(rng() * n); bx[i] = XS[j]; by[i] = YS[j]; }
+      const Db = Reg.polyDesign(bx, DEG);                 // each resample standardized on its OWN columns
+      const fit = Reg.fitCD(Db.Z, by, lambda, 'ridge');
+      const row = new Array(NX);
+      for (let k = 0; k < NX; k++) row[k] = Reg.predictX(fit.beta, fit.b0, XG[k], Db.colMean, Db.colSd);
+      curves[b] = row;
+    }
+    const meanCurve = new Array(NX);
+    for (let k = 0; k < NX; k++) { let m = 0; for (let b = 0; b < B; b++) m += curves[b][k]; meanCurve[k] = m / B; }
+    return { curves, meanCurve };
+  }
+
+  // Bias^2 / Variance / Total at a given lambda (aggregated over the x-grid).
+  function decomposeAt(lambda) {
+    const { curves, meanCurve } = bootstrapCurves(lambda);
+    let bias2 = 0, variance = 0;
+    for (let k = 0; k < NX; k++) {
+      let v = 0; for (let b = 0; b < B; b++) { const d = curves[b][k] - meanCurve[k]; v += d * d; }
+      v /= B;
+      const bi = meanCurve[k] - FG[k];
+      bias2 += bi * bi; variance += v;
+    }
+    bias2 /= NX; variance /= NX;
+    return { lambda, bias2, variance, total: bias2 + variance + SIGMA2 };
+  }
+
+  // One-time heavy precompute: reference fit, sigma^2, and the decomposition curve.
+  function prepare() {
+    const n = XS.length;
+    DFULL = Reg.polyDesign(XS, DEG);
+    GRID  = Reg.lambdaGrid(Reg.lassoLambdaMax(DFULL.Z, YS), NGRID);   // DESCENDING
+
+    // reference "true" function: smallest lambda (= most flexible) full-data ridge fit
+    REF = Reg.fitCD(DFULL.Z, YS, GRID[GRID.length - 1], 'ridge');
+
+    // irreducible noise sigma^2 = residual variance of that reference fit
+    let ssr = 0;
+    for (let i = 0; i < n; i++) { const e = YS[i] - Reg.predictRow(REF.beta, REF.b0, DFULL.Z[i]); ssr += e * e; }
+    SIGMA2 = ssr / n;
+
+    // x-grid across the data range, and f(x) on it
+    const xmin = d3.min(XS), xmax = d3.max(XS);
+    XG = new Array(NX); for (let k = 0; k < NX; k++) XG[k] = xmin + (xmax - xmin) * k / (NX - 1);
+    FG = XG.map(fAt);
+
+    // decomposition across the WHOLE lambda grid + Total-minimizing index
+    DECOMP = GRID.map(decomposeAt);
+    MINIDX = 0; let best = Infinity;
+    for (let i = 0; i < DECOMP.length; i++) if (DECOMP[i].total < best) { best = DECOMP[i].total; MINIDX = i; }
+
+    CURIDX = MINIDX;   // default the slider near the Total-minimizing lambda
+  }
+
+  // ----------------------------------------------------------------- build (static)
+  function build() {
+    // start clean so a reload / re-init never stacks duplicate SVGs (idempotent)
+    ["#bv-fits", "#bv-decomp"].forEach(s => d3.select(s).selectAll("*").remove());
+
+    // ---------- panel 1: resampled-fits cloud (data space) ----------
+    const xpad = 0.05 * (d3.max(XS) - d3.min(XS));
+    const allY = YS.concat(FG);
+    const ypad = 0.10 * (d3.max(allY) - d3.min(allY));
+    xS = d3.scaleLinear([d3.min(XS) - xpad, d3.max(XS) + xpad], [0, Wp]);
+    yS = d3.scaleLinear([d3.min(allY) - ypad, d3.max(allY) + ypad], [Hp, 0]);
+
+    const svg1 = d3.select("#bv-fits").append("svg")
+      .attr("width", Wp + M.left + M.right).attr("height", Hp + M.top + M.bottom)
+      .append("g").attr("transform", `translate(${M.left},${M.top})`);
+    svg1.append("defs").append("clipPath").attr("id", "bv-clip")
+      .append("rect").attr("width", Wp).attr("height", Hp);
+    svg1.append("g").call(d3.axisLeft(yS).ticks(6));
+    svg1.append("g").attr("transform", `translate(0,${Hp})`).call(d3.axisBottom(xS).ticks(6));
+    svg1.append("text").attr("x", Wp / 2).attr("y", Hp + 38).attr("text-anchor", "middle").text("x");
+    svg1.append("text").attr("transform", "rotate(-90)").attr("x", -Hp / 2).attr("y", -40)
+      .attr("text-anchor", "middle").text("y");
+
+    // scatter the real data lightly UNDERNEATH the curves (appended first = drawn beneath)
+    gData = svg1.append("g");
+    gData.selectAll("circle.pt").data(XS.map((x, i) => [x, YS[i]])).join("circle").attr("class", "pt")
+      .attr("cx", d => xS(d[0])).attr("cy", d => yS(d[1])).attr("r", 3)
+      .attr("fill", C.data).attr("opacity", 0.35);
+
+    const clip = svg1.append("g").attr("clip-path", "url(#bv-clip)");
+    gBoot    = clip.append("g");   // faint bootstrap curves (spread = variance)
+    gTruth   = clip.append("g");   // dashed reference f(x)
+    gFitMean = clip.append("g");   // bold average fit
+
+    // ---------- panel 2: decomposition vs lambda (LOG x-axis) ----------
+    // GRID is descending; for a left-to-right increasing log axis use [min, max] lambda.
+    const lmin = d3.min(GRID), lmax = d3.max(GRID);
+    const dmaxRaw = d3.max(DECOMP, d => d.total);
+    lS = d3.scaleLog([lmin, lmax], [0, Wp]);
+    dS = d3.scaleLinear([0, dmaxRaw * 1.05], [Hp, 0]);
+
+    const svg2 = d3.select("#bv-decomp").append("svg")
+      .attr("width", Wp + M.left + M.right).attr("height", Hp + M.top + M.bottom)
+      .append("g").attr("transform", `translate(${M.left},${M.top})`);
+    svg2.append("g").call(d3.axisLeft(dS).ticks(6));
+    svg2.append("g").attr("transform", `translate(0,${Hp})`)
+      .call(d3.axisBottom(lS).ticks(6, "~g"));
+    svg2.append("text").attr("x", Wp / 2).attr("y", Hp + 40).attr("text-anchor", "middle")
+      .text("regularization  λ   (log scale)  —  more λ → simpler model");
+    svg2.append("text").attr("transform", "rotate(-90)").attr("x", -Hp / 2).attr("y", -42)
+      .attr("text-anchor", "middle").text("expected squared error");
+    // annotate the two ends of the complexity axis
+    svg2.append("text").attr("x", 2).attr("y", -3).attr("font-size", 11).attr("fill", "#888")
+      .text("← low λ: flexible (low bias, high variance)");
+    svg2.append("text").attr("x", Wp - 2).attr("y", -3).attr("text-anchor", "end")
+      .attr("font-size", 11).attr("fill", "#888")
+      .text("high λ: stiff (high bias, low variance) →");
+
+    // sorted-by-lambda copy so the polylines draw cleanly on the log axis
+    const sorted = DECOMP.slice().sort((a, b) => a.lambda - b.lambda);
+    const mkLine = key => d3.line().x(d => lS(d.lambda)).y(d => dS(d[key]));
+
+    // sigma^2 floor (irreducible noise)
+    svg2.append("line").attr("x1", 0).attr("x2", Wp).attr("y1", dS(SIGMA2)).attr("y2", dS(SIGMA2))
+      .attr("stroke", C.sigma).attr("stroke-width", 1.5).attr("stroke-dasharray", "2,3");
+    // Variance, Bias^2, Total
+    svg2.append("path").datum(sorted).attr("d", mkLine("variance"))
+      .attr("fill", "none").attr("stroke", C.varc).attr("stroke-width", 2);
+    svg2.append("path").datum(sorted).attr("d", mkLine("bias2"))
+      .attr("fill", "none").attr("stroke", C.bias2).attr("stroke-width", 2);
+    svg2.append("path").datum(sorted).attr("d", mkLine("total"))
+      .attr("fill", "none").attr("stroke", C.total).attr("stroke-width", 2.5);
+
+    // Total-minimizing lambda (fixed marker)
+    const bestLam = GRID[MINIDX];
+    svg2.append("line").attr("x1", lS(bestLam)).attr("x2", lS(bestLam)).attr("y1", 0).attr("y2", Hp)
+      .attr("stroke", C.best).attr("stroke-width", 1.5).attr("stroke-dasharray", "5,4").attr("opacity", 0.8);
+    svg2.append("text").attr("x", lS(bestLam)).attr("y", 12).attr("text-anchor", "middle")
+      .attr("font-size", 11).attr("fill", C.best).text("min Total");
+
+    gDecompCur = svg2.append("g");   // current-lambda vertical line (updated by slider)
+  }
+
+  // ----------------------------------------------------------------- dynamic redraw
+  function drawFits() {
+    const lambda = GRID[CURIDX];
+    const { curves, meanCurve } = bootstrapCurves(lambda);
+
+    const lineGen = d3.line().x((_, k) => xS(XG[k])).y(d => yS(d)).curve(d3.curveMonotoneX);
+
+    // faint bootstrap curves (their SPREAD is the variance)
+    gBoot.selectAll("path.boot").data(curves).join("path").attr("class", "boot")
+      .attr("d", d => lineGen(d)).attr("fill", "none")
+      .attr("stroke", C.boot).attr("stroke-width", 1).attr("opacity", 0.32);
+
+    // reference "true" function f(x) (dashed) -- the GAP to the mean fit is the bias
+    gTruth.selectAll("path.truth").data([FG]).join("path").attr("class", "truth")
+      .attr("d", d => lineGen(d)).attr("fill", "none")
+      .attr("stroke", C.truth).attr("stroke-width", 2).attr("stroke-dasharray", "6,4");
+
+    // average fit (bold)
+    gFitMean.selectAll("path.meanfit").data([meanCurve]).join("path").attr("class", "meanfit")
+      .attr("d", d => lineGen(d)).attr("fill", "none")
+      .attr("stroke", C.mean).attr("stroke-width", 3);
+  }
+
+  function drawDecompMarker() {
+    const lambda = GRID[CURIDX];
+    gDecompCur.selectAll("line.cur").data([lambda]).join("line").attr("class", "cur")
+      .attr("x1", d => lS(d)).attr("x2", d => lS(d)).attr("y1", 0).attr("y2", Hp)
+      .attr("stroke", C.cur).attr("stroke-width", 2);
+  }
+
+  // ----------------------------------------------------------------- text panels
+  function fmtLam(v) { return v.toExponential(2); }
+
+  function updateReadout() {
+    const d = DECOMP[CURIDX];
+    document.getElementById("ro").innerHTML =
+      `λ = <b>${fmtLam(d.lambda)}</b> &nbsp;(index ${CURIDX} of ${GRID.length - 1})` +
+      ` &nbsp;|&nbsp; Bias<sup>2</sup> = <b>${d.bias2.toFixed(4)}</b>` +
+      ` &nbsp;|&nbsp; Variance = <b>${d.variance.toFixed(4)}</b>` +
+      ` &nbsp;|&nbsp; &sigma;<sup>2</sup> = <b>${SIGMA2.toFixed(4)}</b>` +
+      ` &nbsp;|&nbsp; Total = <b>${d.total.toFixed(4)}</b>` +
+      ` &nbsp;|&nbsp; min-Total &lambda; = <b>${fmtLam(GRID[MINIDX])}</b>`;
+  }
+
+  function updateEquation() {
+    document.getElementById("eq").innerHTML =
+      '<div>fixed model: degree-' + DEG + ' polynomial with <b>ridge</b> shrinkage; complexity knob = \\(\\lambda\\)</div>' +
+      '<div>\\( \\mathbb{E}\\big[(y-\\hat f(x))^2\\big] = ' +
+        '\\underbrace{(\\mathbb{E}[\\hat f(x)]-f(x))^2}_{\\text{bias}^2}' +
+        ' + \\underbrace{\\operatorname{Var}[\\hat f(x)]}_{\\text{variance}}' +
+        ' + \\underbrace{\\sigma^2}_{\\text{irreducible}} \\)</div>' +
+      '<div class="muted">large \\(\\lambda\\) \\(\\Rightarrow\\) more bias, less variance &nbsp;&middot;&nbsp; ' +
+        'small \\(\\lambda\\) \\(\\Rightarrow\\) less bias, more variance</div>';
+    typesetEq();
+  }
+
+  function typesetEq() {
+    const el = document.getElementById("eq");
+    if (!el) return;
+    if (window.MathJax && MathJax.typesetPromise) {
+      MathJax.typesetPromise([el]).catch(() => {});
+    } else if (window.MathJax && MathJax.startup && MathJax.startup.promise) {
+      MathJax.startup.promise.then(() => MathJax.typesetPromise([el])).catch(() => {});
+    }
+  }
+
+  function redraw() { drawFits(); drawDecompMarker(); updateReadout(); }
+
+  // ----------------------------------------------------------------- controls
+  function wireControls() {
+    const slider = document.getElementById("lambda");
+    slider.min = 0; slider.max = GRID.length - 1; slider.step = 1; slider.value = CURIDX;
+    slider.addEventListener("input", e => { CURIDX = +e.target.value; redraw(); });
+  }
+
+  function showError(err) {
+    console.error(err);
+    let el = document.getElementById("bv-error");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "bv-error";
+      el.style.cssText = "background:#ffe2e2;border:1px solid #d33;color:#900;" +
+        "padding:10px 14px;margin:10px 0;border-radius:6px;font-weight:bold;";
+      document.body.prepend(el);
+    }
+    el.textContent = "Bias-variance applet error: " + ((err && err.message) || err);
+  }
+
+  // real dataset (shared with the polynomial / ridge applets), via the cached loader
+  const DATA_URL = "https://raw.githubusercontent.com/lorenzoluzi/public_data/master/simple_data.csv";
+
+  function init() {
+   try {
+    if (typeof d3 === "undefined")
+      throw new Error("d3 did not load — check the d3 <script> tag / your network.");
+    if (typeof Reg === "undefined" || typeof Reg.polyDesign !== "function")
+      throw new Error("../scripts/regression.js did not load.");
+    if (typeof loadCSV !== "function")
+      throw new Error("../scripts/dataLoader.js did not load.");
+
+    loadCSV(DATA_URL).then(rows => {
+      try {
+        XS = rows.map(r => +r.x);
+        YS = rows.map(r => +r.y);
+        if (!XS.length || XS.some(v => !isFinite(v)) || YS.some(v => !isFinite(v)))
+          throw new Error("data did not parse to numeric x / y.");
+        prepare();
+        build();
+        wireControls();
+        redraw();
+        updateEquation();
+      } catch (err) { showError(err); }
+    }).catch(err =>
+      showError(new Error("could not load data from " + DATA_URL + " — " + ((err && err.message) || err)))
+    );
+   } catch (err) {
+    showError(err);
+   }
+  }
+  window.addEventListener("load", init);
+  </script>
+</head>
+
+<body>
+<div style="font:14px/1.4 system-ui,-apple-system,sans-serif;padding:8px 12px;"><a href="../index.html" style="color:#0072BD;text-decoration:none;">&larr; All STAT 413 applets</a></div>
+
+  <h1>The Bias&ndash;Variance Tradeoff</h1>
+  <p class="bv-note">
+    We fix a flexible model &mdash; a <b>degree-8 polynomial</b> fit with <b>ridge</b> regularization &mdash;
+    and use the regularization strength <b>&lambda;</b> as the single knob for model complexity.
+    A <b>large &lambda;</b> shrinks the coefficients hard, giving a stiff fit that is the same no matter which
+    data we see (<b>low variance</b>) but systematically off (<b>high bias</b>). A <b>small &lambda;</b> lets the
+    curve chase every wiggle, so it is nearly unbiased but swings wildly from sample to sample (<b>high variance</b>).
+    To see this, we draw <b>B&nbsp;=&nbsp;40 bootstrap resamples</b> of the data, refit at each &lambda;, and watch
+    how the fitted curves spread out.
+  </p>
+  <p class="bv-note">
+    The dashed green curve is a stand-in for the unknown <i>true</i> function <i>f(x)</i>: it is just a
+    lightly-regularized fit on the <b>full</b> dataset (smallest &lambda;). <b>This is only an approximation of the
+    truth</b> &mdash; we never know <i>f</i> exactly &mdash; but it lets us decompose error into bias and variance.
+    The irreducible noise &sigma;<sup>2</sup> is estimated as the residual variance of that reference fit.
+  </p>
+
+  <div class="gd-panels">
+    <div class="gd-panel">
+      <h3>Resampled fits at the current &lambda; (spread = variance, gap to dashed = bias)</h3>
+      <div id="bv-fits"></div>
+      <div class="bv-legend">
+        <span class="key" style="background:#9aa7b4"></span>bootstrap fits
+        <span class="key" style="background:#D55E00"></span>average fit
+        <span class="key" style="background:#377e22"></span>reference f(x)
+        <span class="key" style="background:#3070B7"></span>data
+      </div>
+    </div>
+    <div class="gd-panel">
+      <h3>Bias<sup>2</sup>, Variance and Total error vs &lambda;</h3>
+      <div id="bv-decomp"></div>
+      <div class="bv-legend">
+        <span class="key" style="background:#D55E00"></span>Bias<sup>2</sup>
+        <span class="key" style="background:#0072BD"></span>Variance
+        <span class="key" style="background:#111"></span>Total
+        <span class="key" style="background:#999"></span>&sigma;<sup>2</sup> floor
+      </div>
+    </div>
+  </div>
+
+  <div class="gd-readout" id="ro"></div>
+
+  <div class="gd-controls">
+    <fieldset>
+      <legend>Complexity knob</legend>
+      <div class="gd-row">
+        <label>regularization &lambda;</label>
+        <input type="range" id="lambda">
+      </div>
+      <div class="gd-row muted" style="font-size:12px;color:#888;">
+        slide left for large &lambda; (stiff, high bias) &middot; right for small &lambda; (flexible, high variance)
+      </div>
+    </fieldset>
+  </div>
+
+  <div class="gd-eq" id="eq"></div>
+</body>
+</html>

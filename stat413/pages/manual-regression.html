@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Be the Optimizer &mdash; fit 10 coefficients by hand</title>
+  <link rel="stylesheet" href="../styling/global.css">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; color: #222; }
+    h1 { font-size: 24px; }
+    h3 { font-size: 15px; font-weight: bold; margin: 16px 0 6px 0; }
+    .mr-tablewrap { max-height: 240px; overflow-y: auto; display: inline-block;
+                    border: 1px solid #ccc; border-radius: 6px; }
+    .mr-tablewrap table { border-collapse: collapse; font-size: 12.5px; }
+    .mr-tablewrap th, .mr-tablewrap td { padding: 3px 9px; text-align: right;
+                    font-variant-numeric: tabular-nums; }
+    .mr-tablewrap td:first-child, .mr-tablewrap th:first-child { text-align: left; }
+    .mr-tablewrap thead th { position: sticky; top: 0; background: #eef1f5;
+                    border-bottom: 2px solid #999; }
+    .mr-tablewrap tbody tr:nth-child(even) { background: #f7f8fa; }
+    .mr-tablewrap .tgt { background: #fdf1e2; font-weight: bold; }
+    .mr-note { font-size: 12.5px; color: #777; margin: 4px 0 0 0; }
+    .mr-cols { display: flex; flex-wrap: wrap; gap: 34px; align-items: flex-start; }
+    .mr-sliders { display: grid; grid-template-columns: repeat(2, auto); gap: 4px 26px; }
+    .mr-slider { font-size: 14px; }
+    .mr-slider .nm { display: inline-block; min-width: 92px; }
+    .mr-slider input[type="range"] { vertical-align: middle; width: 190px; }
+    .mr-slider output { font-variant-numeric: tabular-nums; min-width: 52px;
+                    display: inline-block; text-align: right; }
+    .mr-slider .sol { display: inline-block; min-width: 70px; color: #377e22;
+                    font-weight: bold; font-variant-numeric: tabular-nums;
+                    visibility: hidden; font-size: 13px; }
+    .mr-loss { font-size: 15px; }
+    .mr-loss .big { font-size: 34px; font-weight: bold; font-variant-numeric: tabular-nums; }
+    .mr-loss .row { margin: 4px 0; font-variant-numeric: tabular-nums; }
+    .mr-meter { width: 260px; height: 16px; border: 1px solid #aaa; border-radius: 8px;
+                    overflow: hidden; background: #eee; margin: 6px 0; }
+    .mr-meter div { height: 100%; width: 0%; background: #c22; transition: width 0.15s, background 0.3s; }
+    .mr-solved { color: #377e22; font-weight: bold; visibility: hidden; }
+    .mr-controls { margin: 14px 0; display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; }
+    .mr-controls fieldset { border: 1px solid #ccc; border-radius: 6px; padding: 10px 14px; }
+    .mr-controls legend { font-weight: bold; font-size: 13px; padding: 0 6px; }
+    .mr-row { margin: 6px 0; font-size: 14px; }
+    .mr-buttons button { padding: 8px 16px; font-size: 14px; margin-right: 8px; cursor: pointer; }
+    .mr-eq { background: #f6f6f8; border: 1px solid #e0e0e6; border-radius: 6px;
+             padding: 12px 16px; margin-top: 12px; font-size: 15px; line-height: 2.2; max-width: 880px; }
+    /* The three loss lines are laid out as a 3-column CSS table: label | L(...) |
+       = RHS. Table layout sizes each column to its widest cell, so the L's left
+       edges line up and the equals signs line up, without hand-tuned \quad's.
+       Cells are baseline-aligned, so the tall \frac{1}{n} on the OLS row does not
+       shift its "=" off the shared baseline. */
+    .mr-eq { display: table; border-spacing: 0; }
+    .mr-eq .lossline { display: table-row; }
+    .mr-eq .lossline > span { display: table-cell; padding: 1px 0; }
+    .mr-eq .lossline > span:first-child  { padding-left: 8px; padding-right: 0.85em; }
+    .mr-eq .lossline > span:nth-child(2) { padding-right: 0.3em; }
+    .mr-eq .lossline > span:last-child   { padding-right: 8px; }
+    /* highlight the whole row: paint the cells, rounding only the outer two */
+    .mr-eq .active > span { background: #ffe9c7; }
+    .mr-eq .active > span:first-child { border-radius: 4px 0 0 4px; }
+    .mr-eq .active > span:last-child  { border-radius: 0 4px 4px 0; }
+    .mr-hint { font-size: 13px; color: #777; font-style: italic; }
+  </style>
+
+  <script src="https://d3js.org/d3.v7.js"></script>
+  <script>window.MathJax = { tex: { inlineMath: [['\\(', '\\)'], ['$', '$']] }, svg: { fontCache: 'global' } };</script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+
+  <script>
+  // ===========================================================================
+  // "Be the optimizer": fit 10 regression coefficients BY HAND and watch the
+  // loss. No plots of the data — just the table, the knobs, and the number.
+  // The point: with 10 coupled coefficients, one-knob-at-a-time tuning barely
+  // moves; gradient descent does this search automatically.
+  //
+  // Model (predictors z-scored, mpg centered, so no intercept is needed):
+  //   yhat_i = sum_j beta_j z_ij
+  //   OLS  : L = (1/n) sum_i (y_i - yhat_i)^2
+  //   Ridge: L = MSE + lambda_R * sum_j beta_j^2        (lambda_R = 0.5)
+  //   Lasso: L = MSE + lambda_L * sum_j |beta_j|        (lambda_L = 1)
+  // Optimal coefficients computed in-page: OLS/ridge by solving the normal
+  // equations (Gaussian elimination), lasso by coordinate descent.
+  // ===========================================================================
+
+  // ---- DATA (swap here) -----------------------------------------------------
+  // The classic mtcars data: 1974 Motor Trend US magazine road tests, 32 cars.
+  // Factual measurements (not copyrightable); shipped with every R install.
+  // Columns: model, mpg (target), then the 10 predictors.
+  const COLS = ["cyl", "disp", "hp", "drat", "wt", "qsec", "vs", "am", "gear", "carb"];
+  const RAW = `Mazda RX4,21,6,160,110,3.9,2.62,16.46,0,1,4,4
+Mazda RX4 Wag,21,6,160,110,3.9,2.875,17.02,0,1,4,4
+Datsun 710,22.8,4,108,93,3.85,2.32,18.61,1,1,4,1
+Hornet 4 Drive,21.4,6,258,110,3.08,3.215,19.44,1,0,3,1
+Hornet Sportabout,18.7,8,360,175,3.15,3.44,17.02,0,0,3,2
+Valiant,18.1,6,225,105,2.76,3.46,20.22,1,0,3,1
+Duster 360,14.3,8,360,245,3.21,3.57,15.84,0,0,3,4
+Merc 240D,24.4,4,146.7,62,3.69,3.19,20,1,0,4,2
+Merc 230,22.8,4,140.8,95,3.92,3.15,22.9,1,0,4,2
+Merc 280,19.2,6,167.6,123,3.92,3.44,18.3,1,0,4,4
+Merc 280C,17.8,6,167.6,123,3.92,3.44,18.9,1,0,4,4
+Merc 450SE,16.4,8,275.8,180,3.07,4.07,17.4,0,0,3,3
+Merc 450SL,17.3,8,275.8,180,3.07,3.73,17.6,0,0,3,3
+Merc 450SLC,15.2,8,275.8,180,3.07,3.78,18,0,0,3,3
+Cadillac Fleetwood,10.4,8,472,205,2.93,5.25,17.98,0,0,3,4
+Lincoln Continental,10.4,8,460,215,3,5.424,17.82,0,0,3,4
+Chrysler Imperial,14.7,8,440,230,3.23,5.345,17.42,0,0,3,4
+Fiat 128,32.4,4,78.7,66,4.08,2.2,19.47,1,1,4,1
+Honda Civic,30.4,4,75.7,52,4.93,1.615,18.52,1,1,4,2
+Toyota Corolla,33.9,4,71.1,65,4.22,1.835,19.9,1,1,4,1
+Toyota Corona,21.5,4,120.1,97,3.7,2.465,20.01,1,0,3,1
+Dodge Challenger,15.5,8,318,150,2.76,3.52,16.87,0,0,3,2
+AMC Javelin,15.2,8,304,150,3.15,3.435,17.3,0,0,3,2
+Camaro Z28,13.3,8,350,245,3.73,3.84,15.41,0,0,3,4
+Pontiac Firebird,19.2,8,400,175,3.08,3.845,17.05,0,0,3,2
+Fiat X1-9,27.3,4,79,66,4.08,1.935,18.9,1,1,4,1
+Porsche 914-2,26,4,120.3,91,4.43,2.14,16.7,0,1,5,2
+Lotus Europa,30.4,4,95.1,113,3.77,1.513,16.9,1,1,5,2
+Ford Pantera L,15.8,8,351,264,4.22,3.17,14.5,0,1,5,4
+Ferrari Dino,19.7,6,145,175,3.62,2.77,15.5,0,1,5,6
+Maserati Bora,15,8,301,335,3.54,3.57,14.6,0,1,5,8
+Volvo 142E,21.4,4,121,109,4.11,2.78,18.6,1,1,4,2`;
+  const LAMBDA = { ridge: 0.5, lasso: 1.0 };
+  // ---------------------------------------------------------------------------
+
+  const P = 10;
+  let MODELS = [], Y0 = [], XR = [];       // raw
+  let X = [], Y = [];                      // standardized / centered
+  let SOL = {}, OPT = {}, LOSS0 = {};      // per-loss optimum & references
+  let BEST = {};                           // best loss reached so far, per loss
+  let HIST = {};                           // loss history per loss type
+  let MOVES = 0;
+  let revealed = false;
+
+  // -------------------------------------------------------------- maths
+  function parseData() {
+    RAW.split("\n").forEach(line => {
+      const f = line.split(",");
+      MODELS.push(f[0]);
+      Y0.push(+f[1]);
+      XR.push(f.slice(2).map(Number));
+    });
+    const n = Y0.length;
+    const mean = a => a.reduce((s, v) => s + v, 0) / a.length;
+    const ym = mean(Y0);
+    Y = Y0.map(v => v - ym);
+    const mus = [], sds = [];
+    for (let j = 0; j < P; j++) {
+      const col = XR.map(r => r[j]);
+      const m = mean(col);
+      mus.push(m);
+      sds.push(Math.sqrt(col.reduce((s, v) => s + (v - m) * (v - m), 0) / n));
+    }
+    X = XR.map(r => r.map((v, j) => (v - mus[j]) / sds[j]));
+  }
+
+  function mse(beta) {
+    let s = 0;
+    const n = X.length;
+    for (let i = 0; i < n; i++) {
+      let pr = 0;
+      for (let j = 0; j < P; j++) pr += X[i][j] * beta[j];
+      s += (Y[i] - pr) * (Y[i] - pr);
+    }
+    return s / n;
+  }
+  function loss(beta, type) {
+    if (type === "ridge") return mse(beta) + LAMBDA.ridge * beta.reduce((s, v) => s + v * v, 0);
+    if (type === "lasso") return mse(beta) + LAMBDA.lasso * beta.reduce((s, v) => s + Math.abs(v), 0);
+    return mse(beta);
+  }
+
+  // Gaussian elimination with partial pivoting: solve A x = b
+  function solve(A, b) {
+    const m = b.length;
+    A = A.map(r => r.slice()); b = b.slice();
+    for (let k = 0; k < m; k++) {
+      let piv = k;
+      for (let i = k + 1; i < m; i++) if (Math.abs(A[i][k]) > Math.abs(A[piv][k])) piv = i;
+      [A[k], A[piv]] = [A[piv], A[k]]; [b[k], b[piv]] = [b[piv], b[k]];
+      for (let i = k + 1; i < m; i++) {
+        const f = A[i][k] / A[k][k];
+        for (let j = k; j < m; j++) A[i][j] -= f * A[k][j];
+        b[i] -= f * b[k];
+      }
+    }
+    const x = new Array(m).fill(0);
+    for (let i = m - 1; i >= 0; i--) {
+      let s = b[i];
+      for (let j = i + 1; j < m; j++) s -= A[i][j] * x[j];
+      x[i] = s / A[i][i];
+    }
+    return x;
+  }
+  function normalEq(lam) {          // (X'X/n + lam*I) beta = X'y/n
+    const n = X.length, A = [], b = new Array(P).fill(0);
+    for (let j = 0; j < P; j++) {
+      A.push(new Array(P).fill(0));
+      for (let k = 0; k < P; k++) {
+        let s = 0;
+        for (let i = 0; i < n; i++) s += X[i][j] * X[i][k];
+        A[j][k] = s / n;
+      }
+      A[j][j] += lam;
+      let s = 0;
+      for (let i = 0; i < n; i++) s += X[i][j] * Y[i];
+      b[j] = s / n;
+    }
+    return solve(A, b);
+  }
+  const soft = (z, t) => Math.sign(z) * Math.max(Math.abs(z) - t, 0);
+  function lassoCD(lam) {           // coordinate descent (columns are z-scored)
+    const n = X.length;
+    let b = new Array(P).fill(0);
+    for (let it = 0; it < 3000; it++) {
+      let mx = 0;
+      for (let j = 0; j < P; j++) {
+        let c = 0;
+        for (let i = 0; i < n; i++) {
+          let pr = 0;
+          for (let k = 0; k < P; k++) if (k !== j) pr += X[i][k] * b[k];
+          c += X[i][j] * (Y[i] - pr);
+        }
+        c *= 2 / n;
+        const nb = soft(c, lam) / 2;
+        mx = Math.max(mx, Math.abs(nb - b[j]));
+        b[j] = nb;
+      }
+      if (mx < 1e-10) break;
+    }
+    return b;
+  }
+
+  // -------------------------------------------------------------- UI helpers
+  function currentType() { return document.querySelector('input[name="losstype"]:checked').value; }
+  function currentBeta() {
+    return d3.range(P).map(j => +document.getElementById("b" + j).value);
+  }
+
+  function buildTable() {
+    const thead = "<tr><th>model</th>" + COLS.map(c => `<th>${c}</th>`).join("") +
+                  '<th class="tgt">mpg</th></tr>';
+    const rows = MODELS.map((m, i) =>
+      "<tr><td>" + m + "</td>" +
+      XR[i].map(v => `<td>${v}</td>`).join("") +
+      `<td class="tgt">${Y0[i]}</td></tr>`).join("");
+    document.getElementById("mr-table").innerHTML =
+      `<table><thead>${thead}</thead><tbody>${rows}</tbody></table>`;
+  }
+
+  function buildSliders() {
+    const host = d3.select("#mr-sliders");
+    host.selectAll("*").remove();       // start clean: re-init never stacks sliders
+    COLS.forEach((c, j) => {
+      const div = host.append("div").attr("class", "mr-slider");
+      div.html(
+        `<span class="nm">\\(\\beta_{${j + 1}}\\) (${c})</span>` +
+        `<input type="range" id="b${j}" min="-4" max="4" step="0.01" value="0">` +
+        `<output id="o${j}">0.00</output>` +
+        `<span class="sol" id="s${j}"></span>`
+      );
+    });
+    d3.range(P).forEach(j => {
+      document.getElementById("b" + j).addEventListener("input", () => {
+        MOVES += 1;
+        document.getElementById("o" + j).value = (+document.getElementById("b" + j).value).toFixed(2);
+        update();
+      });
+    });
+  }
+
+  // sparkline of the loss history for the current loss type
+  const Ws = 460, Hs = 90, Ms = { top: 8, right: 10, bottom: 22, left: 52 };
+  let gSpark, gSparkAxX, gSparkAxY;
+  function buildSpark() {
+    d3.select("#mr-spark").selectAll("*").remove();
+    const svg = d3.select("#mr-spark").append("svg")
+      .attr("width", Ws + Ms.left + Ms.right).attr("height", Hs + Ms.top + Ms.bottom)
+      .append("g").attr("transform", `translate(${Ms.left},${Ms.top})`);
+    gSparkAxY = svg.append("g");
+    gSparkAxX = svg.append("g").attr("transform", `translate(0,${Hs})`);
+    gSpark = svg.append("g");
+  }
+  function drawSpark() {
+    const t = currentType();
+    const h = HIST[t];
+    const yS = d3.scaleLog([OPT[t] * 0.98, LOSS0[t] * 1.05], [Hs, 0]).clamp(true);
+    const xS = d3.scaleLinear([0, Math.max(30, h.length - 1)], [0, Ws]);
+    gSparkAxY.call(d3.axisLeft(yS).ticks(3, ".3~s"));
+    gSparkAxX.call(d3.axisBottom(xS).ticks(6).tickFormat(d3.format("d")));
+    gSpark.selectAll("line.opt").data([0]).join("line").attr("class", "opt")
+      .attr("x1", 0).attr("x2", Ws).attr("y1", yS(OPT[t])).attr("y2", yS(OPT[t]))
+      .attr("stroke", "#377e22").attr("stroke-dasharray", "4,3");
+    gSpark.selectAll("path.h").data([h]).join("path").attr("class", "h")
+      .attr("d", d3.line().x((d, i) => xS(i)).y(d => yS(d)))
+      .attr("fill", "none").attr("stroke", "#D55E00").attr("stroke-width", 1.6);
+  }
+
+  // -------------------------------------------------------------- update
+  function update() {
+    const t = currentType();
+    const beta = currentBeta();
+    const L = loss(beta, t);
+    if (L < BEST[t]) BEST[t] = L;
+    HIST[t].push(L);
+    if (HIST[t].length > 500) HIST[t].shift();
+
+    document.getElementById("mr-big").textContent = L.toFixed(3);
+    document.getElementById("mr-opt").textContent = OPT[t].toFixed(3);
+    document.getElementById("mr-best").textContent = BEST[t] === Infinity ? "–" : BEST[t].toFixed(3);
+    document.getElementById("mr-moves").textContent = MOVES;
+
+    // meter: fraction of the possible improvement (from all-zero) achieved
+    const frac = Math.max(0, Math.min(1, (LOSS0[t] - L) / (LOSS0[t] - OPT[t])));
+    const bar = document.getElementById("mr-bar");
+    bar.style.width = (100 * frac).toFixed(1) + "%";
+    bar.style.background = frac > 0.98 ? "#377e22" : frac > 0.8 ? "#E69F00" : "#c22";
+    document.getElementById("mr-solved").style.visibility =
+      L <= OPT[t] * 1.02 ? "visible" : "hidden";
+
+    if (revealed) COLS.forEach((c, j) => {
+      document.getElementById("s" + j).textContent = "→ " + SOL[t][j].toFixed(2);
+    });
+    drawSpark();
+  }
+
+  function onLossSwitch() {
+    ["ols", "ridge", "lasso"].forEach(k =>
+      document.getElementById("eq-" + k).classList.toggle("active", k === currentType()));
+    update();
+  }
+
+  function wireControls() {
+    document.querySelectorAll('input[name="losstype"]').forEach(el =>
+      el.addEventListener("change", onLossSwitch));
+    document.getElementById("reveal").addEventListener("click", () => {
+      revealed = !revealed;
+      document.getElementById("reveal").textContent =
+        revealed ? "Hide solution" : "Show solution";
+      d3.range(P).forEach(j => {
+        document.getElementById("s" + j).style.visibility = revealed ? "visible" : "hidden";
+      });
+      update();
+    });
+    document.getElementById("zero").addEventListener("click", () => {
+      d3.range(P).forEach(j => {
+        document.getElementById("b" + j).value = 0;
+        document.getElementById("o" + j).value = "0.00";
+      });
+      update();
+    });
+  }
+
+  function showError(err) {
+    console.error(err);
+    const el = document.createElement("div");
+    el.style.cssText = "background:#ffe2e2;border:1px solid #d33;color:#900;" +
+      "padding:10px 14px;margin:10px 0;border-radius:6px;font-weight:bold;";
+    el.textContent = "Applet error: " + ((err && err.message) || err);
+    document.body.prepend(el);
+  }
+
+  function init() {
+    if (init.done) return;              // guard against a double 'load'
+    init.done = true;
+    try {
+      if (typeof d3 === "undefined")
+        throw new Error("d3 did not load — check the d3 <script> tag / your network.");
+      parseData();
+      SOL = { ols: normalEq(0), ridge: normalEq(LAMBDA.ridge), lasso: lassoCD(LAMBDA.lasso) };
+      const zero = new Array(P).fill(0);
+      ["ols", "ridge", "lasso"].forEach(t => {
+        OPT[t] = loss(SOL[t], t);
+        LOSS0[t] = loss(zero, t);
+        BEST[t] = Infinity;
+        HIST[t] = [];
+      });
+      buildTable();
+      buildSliders();
+      buildSpark();
+      wireControls();
+      onLossSwitch();
+      if (window.MathJax && MathJax.startup && MathJax.startup.promise)
+        MathJax.startup.promise.then(() => MathJax.typesetPromise()).catch(() => {});
+    } catch (err) { showError(err); }
+  }
+  window.addEventListener("load", init);
+  </script>
+</head>
+
+<body>
+<div style="font:14px/1.4 system-ui,-apple-system,sans-serif;padding:8px 12px;"><a href="../index.html" style="color:#0072BD;text-decoration:none;">&larr; All STAT 413 applets</a></div>
+
+  <h1>Be the Optimizer</h1>
+  <p style="max-width:880px">Below is a real dataset: 32 cars road-tested by <i>Motor Trend</i>
+     in 1974. Your job: predict \(\text{mpg}\) from the 10 other variables by choosing the
+     coefficients \(\beta_1, \dots, \beta_{10}\) <b>by hand</b> to make the loss as small as
+     possible. Each predictor is standardized
+     <!-- to a z-score and \(\text{mpg}\) is centered, so 
+     \( \widehat{\text{mpg}}_i - \overline{\text{mpg}} = \sum_j \beta_j z_{ij} \) -->
+     so that no intercept is needed. There is no picture to guide you &mdash; only the number.
+     This is exactly the search gradient descent automates.</p>
+
+  <h3>The data before standardization</h3>
+  <div class="mr-tablewrap" id="mr-table"></div>
+  <!-- <div class="mr-note">mtcars: 1974 Motor Trend US road tests; factual data, freely redistributable.</div> -->
+
+  <div class="mr-controls">
+    <fieldset>
+      <legend>Loss to minimize</legend>
+      <div class="mr-row"><label><input type="radio" name="losstype" value="ols" checked> OLS</label></div>
+      <div class="mr-row"><label><input type="radio" name="losstype" value="ridge"> Ridge \((\lambda = 0.5)\)</label></div>
+      <div class="mr-row"><label><input type="radio" name="losstype" value="lasso"> Lasso \((\lambda = 1)\)</label></div>
+    </fieldset>
+
+    <div class="mr-loss">
+      <div>current loss</div>
+      <div class="big" id="mr-big"></div>
+      <div class="mr-meter"><div id="mr-bar"></div></div>
+      <div class="row">optimal loss: <b id="mr-opt"></b>
+        &nbsp;|&nbsp; your best: <b id="mr-best"></b>
+        &nbsp;|&nbsp; slider adjustments: <b id="mr-moves">0</b></div>
+      <div class="mr-solved" id="mr-solved">within 2% of the optimum &mdash; as good as converged!</div>
+    </div>
+  </div>
+
+  <h3>The 10 knobs</h3>
+  <div class="mr-cols">
+    <div class="mr-sliders" id="mr-sliders"></div>
+    <div>
+      <div class="mr-hint" style="max-width:280px">Careful: the knobs are <b>coupled</b>.
+        The best value for one \(\beta_j\) depends on all the others, so fixing one knob
+        un-fixes the rest.</div>
+      <div class="mr-buttons" style="margin-top:12px">
+        <button id="reveal">Show solution</button>
+        <button id="zero">Reset all to 0</button>
+      </div>
+      <div class="mr-hint" style="margin-top:6px">The solution is only <i>shown</i> &mdash;
+        you still have to dial it in yourself.</div>
+    </div>
+  </div>
+
+  <h3>Your loss history (dashed line = optimum)</h3>
+  <div id="mr-spark"></div>
+
+  <div class="mr-eq">
+    <div class="lossline" id="eq-ols">
+      <span>\( \text{OLS:} \)</span>
+      <span>\( L_\text{OLS}(\beta_1, \dots, \beta_{10}) \)</span>
+      <span>\( = \frac{1}{n}\sum_{i=1}^{n} \Big( y_i - \sum_{j=1}^{10} \beta_j z_{ij} \Big)^2 \)</span>
+    </div>
+    <div class="lossline" id="eq-ridge">
+      <span>\( \text{Ridge:} \)</span>
+      <span>\( L_\text{R}(\beta_1, \dots, \beta_{10}) \)</span>
+      <span>\( = L_\text{OLS}(\beta_1, \dots, \beta_{10}) + \lambda \sum_{j=1}^{10} \beta_j^2, \qquad \lambda = 0.5 \)</span>
+    </div>
+    <div class="lossline" id="eq-lasso">
+      <span>\( \text{Lasso:} \)</span>
+      <span>\( L_\text{LASSO}(\beta_1, \dots, \beta_{10}) \)</span>
+      <span>\( = L_\text{OLS}(\beta_1, \dots, \beta_{10}) + \lambda \sum_{j=1}^{10} |\beta_j|, \qquad \lambda = 1 \)</span>
+    </div>
+  </div>
+</body>
+</html>

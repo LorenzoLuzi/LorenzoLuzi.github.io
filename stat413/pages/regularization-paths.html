@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Regularization Paths &mdash; OLS, Ridge &amp; Lasso vs &lambda;</title>
+  <link rel="stylesheet" href="../styling/global.css">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; color: #222; }
+    h1 { font-size: 24px; }
+    .rp-panels { display: flex; flex-wrap: wrap; gap: 22px; align-items: flex-start; }
+    .rp-panel h3 { font-size: 15px; font-weight: bold; margin: 10px 0 2px 0; text-align: center; }
+    .rp-legend { font-size: 13px; color: #444; margin: 8px 0; max-width: 900px; }
+    .rp-legend .sw { display: inline-block; width: 13px; height: 13px; border-radius: 3px;
+                     vertical-align: -2px; margin: 0 4px 0 12px; }
+    .rp-controls { margin: 14px 0; display: flex; flex-wrap: wrap; gap: 28px; align-items: center; }
+    .rp-controls fieldset { border: 1px solid #ccc; border-radius: 6px; padding: 10px 16px; }
+    .rp-controls legend { font-weight: bold; font-size: 13px; padding: 0 6px; }
+    .rp-row { font-size: 14px; }
+    .rp-row input[type="range"] { vertical-align: middle; width: 320px; }
+    .rp-row output { font-variant-numeric: tabular-nums; min-width: 64px; display: inline-block; }
+    .rp-counts { font-size: 15px; font-variant-numeric: tabular-nums; }
+    .rp-counts .lasso { color: #D55E00; font-weight: bold; }
+    .rp-eq { background: #f6f6f8; border: 1px solid #e0e0e6; border-radius: 6px;
+             padding: 12px 16px; margin-top: 12px; font-size: 15px; line-height: 2.2; max-width: 900px; }
+    .rp-hint { font-size: 13px; color: #777; font-style: italic; }
+    .plotwrap { position: relative; display: inline-block; }
+    .plotwrap .xlab { position: absolute; left: 50%; bottom: 2px; transform: translateX(-50%); font-size: 14px; }
+    .plotwrap .ylab { position: absolute; left: 8px; top: -6px; font-size: 14px; }
+  </style>
+
+  <script src="https://d3js.org/d3.v7.js"></script>
+  <script>window.MathJax = { tex: { inlineMath: [['\\(', '\\)'], ['$', '$']] }, svg: { fontCache: 'global' } };</script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+
+  <script>
+  // ===========================================================================
+  // Regularization paths on the mtcars data (mpg ~ 10 standardized predictors):
+  //   OLS  : beta_hat = argmin MSE                       (lambda irrelevant)
+  //   Ridge: beta_hat(lambda) = argmin MSE + lambda * sum beta_j^2
+  //          -> closed form (X'X/n + lambda I)^{-1} X'y/n, shrinks SMOOTHLY,
+  //             never exactly 0
+  //   Lasso: beta_hat(lambda) = argmin MSE + lambda * sum |beta_j|
+  //          -> coordinate descent (soft-thresholding), coefficients hit
+  //             EXACTLY 0 one by one as lambda grows (sparsity)
+  // Everything is computed HERE, in this file, at page load — swap in new data
+  // and the paths recompute. (Reference: lasso kills all 10 coefficients by
+  // lambda ~ 10.3 on this data; ridge min |beta_j| at lambda = 12 is ~0.13.)
+  // ===========================================================================
+
+  // ---- DATA (swap here): mtcars, 1974 Motor Trend road tests --------------
+  const COLS = ["cyl", "disp", "hp", "drat", "wt", "qsec", "vs", "am", "gear", "carb"];
+  const RAW = `Mazda RX4,21,6,160,110,3.9,2.62,16.46,0,1,4,4
+Mazda RX4 Wag,21,6,160,110,3.9,2.875,17.02,0,1,4,4
+Datsun 710,22.8,4,108,93,3.85,2.32,18.61,1,1,4,1
+Hornet 4 Drive,21.4,6,258,110,3.08,3.215,19.44,1,0,3,1
+Hornet Sportabout,18.7,8,360,175,3.15,3.44,17.02,0,0,3,2
+Valiant,18.1,6,225,105,2.76,3.46,20.22,1,0,3,1
+Duster 360,14.3,8,360,245,3.21,3.57,15.84,0,0,3,4
+Merc 240D,24.4,4,146.7,62,3.69,3.19,20,1,0,4,2
+Merc 230,22.8,4,140.8,95,3.92,3.15,22.9,1,0,4,2
+Merc 280,19.2,6,167.6,123,3.92,3.44,18.3,1,0,4,4
+Merc 280C,17.8,6,167.6,123,3.92,3.44,18.9,1,0,4,4
+Merc 450SE,16.4,8,275.8,180,3.07,4.07,17.4,0,0,3,3
+Merc 450SL,17.3,8,275.8,180,3.07,3.73,17.6,0,0,3,3
+Merc 450SLC,15.2,8,275.8,180,3.07,3.78,18,0,0,3,3
+Cadillac Fleetwood,10.4,8,472,205,2.93,5.25,17.98,0,0,3,4
+Lincoln Continental,10.4,8,460,215,3,5.424,17.82,0,0,3,4
+Chrysler Imperial,14.7,8,440,230,3.23,5.345,17.42,0,0,3,4
+Fiat 128,32.4,4,78.7,66,4.08,2.2,19.47,1,1,4,1
+Honda Civic,30.4,4,75.7,52,4.93,1.615,18.52,1,1,4,2
+Toyota Corolla,33.9,4,71.1,65,4.22,1.835,19.9,1,1,4,1
+Toyota Corona,21.5,4,120.1,97,3.7,2.465,20.01,1,0,3,1
+Dodge Challenger,15.5,8,318,150,2.76,3.52,16.87,0,0,3,2
+AMC Javelin,15.2,8,304,150,3.15,3.435,17.3,0,0,3,2
+Camaro Z28,13.3,8,350,245,3.73,3.84,15.41,0,0,3,4
+Pontiac Firebird,19.2,8,400,175,3.08,3.845,17.05,0,0,3,2
+Fiat X1-9,27.3,4,79,66,4.08,1.935,18.9,1,1,4,1
+Porsche 914-2,26,4,120.3,91,4.43,2.14,16.7,0,1,5,2
+Lotus Europa,30.4,4,95.1,113,3.77,1.513,16.9,1,1,5,2
+Ford Pantera L,15.8,8,351,264,4.22,3.17,14.5,0,1,5,4
+Ferrari Dino,19.7,6,145,175,3.62,2.77,15.5,0,1,5,6
+Maserati Bora,15,8,301,335,3.54,3.57,14.6,0,1,5,8
+Volvo 142E,21.4,4,121,109,4.11,2.78,18.6,1,1,4,2`;
+  const LAM_MIN = 0.01, LAM_MAX = 12.5, NLAM = 61;   // log-spaced lambda grid
+  // ---------------------------------------------------------------------------
+
+  const P = 10;
+  const VCOLOR = d3.schemeTableau10;      // one color per variable, everywhere
+  const MCOLOR = { ols: "#888", ridge: "#3070B7", lasso: "#D55E00" };
+
+  let X = [], Y = [];                     // standardized predictors, centered mpg
+  let LAMS = [];                          // the lambda grid
+  let OLSB = [];                          // OLS coefficients
+  let PATH = { ridge: [], lasso: [] };    // PATH[m][i] = beta vector at LAMS[i]
+  let CUR = 1.0;                          // current slider lambda
+
+  // -------------------------------------------------------------- maths
+  function parseData() {
+    const Y0 = [], XR = [];
+    RAW.split("\n").forEach(line => {
+      const f = line.split(",");
+      Y0.push(+f[1]);
+      XR.push(f.slice(2).map(Number));
+    });
+    const n = Y0.length;
+    const mean = a => a.reduce((s, v) => s + v, 0) / a.length;
+    const ym = mean(Y0);
+    Y = Y0.map(v => v - ym);
+    const mus = [], sds = [];
+    for (let j = 0; j < P; j++) {
+      const col = XR.map(r => r[j]);
+      const m = mean(col);
+      mus.push(m);
+      sds.push(Math.sqrt(col.reduce((s, v) => s + (v - m) * (v - m), 0) / n));
+    }
+    X = XR.map(r => r.map((v, j) => (v - mus[j]) / sds[j]));
+  }
+
+  function solve(A, b) {                  // Gaussian elimination, partial pivoting
+    const m = b.length;
+    A = A.map(r => r.slice()); b = b.slice();
+    for (let k = 0; k < m; k++) {
+      let piv = k;
+      for (let i = k + 1; i < m; i++) if (Math.abs(A[i][k]) > Math.abs(A[piv][k])) piv = i;
+      [A[k], A[piv]] = [A[piv], A[k]]; [b[k], b[piv]] = [b[piv], b[k]];
+      for (let i = k + 1; i < m; i++) {
+        const f = A[i][k] / A[k][k];
+        for (let j = k; j < m; j++) A[i][j] -= f * A[k][j];
+        b[i] -= f * b[k];
+      }
+    }
+    const x = new Array(m).fill(0);
+    for (let i = m - 1; i >= 0; i--) {
+      let s = b[i];
+      for (let j = i + 1; j < m; j++) s -= A[i][j] * x[j];
+      x[i] = s / A[i][i];
+    }
+    return x;
+  }
+  function ridgeAt(lam) {                 // (X'X/n + lam I) beta = X'y/n
+    const n = X.length, A = [], b = new Array(P).fill(0);
+    for (let j = 0; j < P; j++) {
+      A.push(new Array(P).fill(0));
+      for (let k = 0; k < P; k++) {
+        let s = 0;
+        for (let i = 0; i < n; i++) s += X[i][j] * X[i][k];
+        A[j][k] = s / n;
+      }
+      A[j][j] += lam;
+      let s = 0;
+      for (let i = 0; i < n; i++) s += X[i][j] * Y[i];
+      b[j] = s / n;
+    }
+    return solve(A, b);
+  }
+  const soft = (z, t) => Math.sign(z) * Math.max(Math.abs(z) - t, 0);
+  function lassoAt(lam, warm) {           // coordinate descent (z-scored columns)
+    const n = X.length;
+    let b = warm ? warm.slice() : new Array(P).fill(0);
+    for (let it = 0; it < 2000; it++) {
+      let mx = 0;
+      for (let j = 0; j < P; j++) {
+        let c = 0;
+        for (let i = 0; i < n; i++) {
+          let pr = 0;
+          for (let k = 0; k < P; k++) if (k !== j) pr += X[i][k] * b[k];
+          c += X[i][j] * (Y[i] - pr);
+        }
+        c *= 2 / n;
+        const nb = soft(c, lam) / 2;
+        mx = Math.max(mx, Math.abs(nb - b[j]));
+        b[j] = nb;
+      }
+      if (mx < 1e-10) break;
+    }
+    return b;
+  }
+  function computePaths() {
+    LAMS = d3.range(NLAM).map(i =>
+      LAM_MIN * Math.pow(LAM_MAX / LAM_MIN, i / (NLAM - 1)));
+    OLSB = ridgeAt(0);
+    PATH.ridge = LAMS.map(l => ridgeAt(l));
+    PATH.lasso = [];
+    let warm = null;                       // warm starts along the grid
+    LAMS.forEach(l => { warm = lassoAt(l, warm); PATH.lasso.push(warm); });
+  }
+  function nearestGrid(lam) {
+    let bi = 0, bd = Infinity;
+    LAMS.forEach((l, i) => { const d = Math.abs(Math.log(l) - Math.log(lam)); if (d < bd) { bd = d; bi = i; } });
+    return bi;
+  }
+  // exact solutions at the slider's lambda (lasso warm-started from the grid)
+  function betasAt(lam) {
+    return { ols: OLSB, ridge: ridgeAt(lam), lasso: lassoAt(lam, PATH.lasso[nearestGrid(lam)]) };
+  }
+
+  // -------------------------------------------------------------- panels
+  const Wp = 270, Hp = 230, M = { top: 12, right: 12, bottom: 40, left: 44 };
+  const Wb = 880, Hb = 210, Mb = { top: 14, right: 16, bottom: 34, left: 44 };
+  let lamS, coefS, panels = {}, gBars, bXS, bYS, axBX;
+
+  function yDomain() {
+    let lo = 0, hi = 0;
+    const scan = b => b.forEach(v => { lo = Math.min(lo, v); hi = Math.max(hi, v); });
+    scan(OLSB);
+    PATH.ridge.forEach(scan);
+    PATH.lasso.forEach(scan);
+    const pad = 0.08 * (hi - lo);
+    return [lo - pad, hi + pad];
+  }
+
+  function buildPathPanel(id, method) {
+    d3.select(id).selectAll("*").remove();
+    const svg = d3.select(id).append("svg")
+      .attr("width", Wp + M.left + M.right).attr("height", Hp + M.top + M.bottom)
+      .append("g").attr("transform", `translate(${M.left},${M.top})`);
+    svg.append("g").call(d3.axisLeft(coefS).ticks(6));
+    svg.append("g").attr("transform", `translate(0,${Hp})`)
+      .call(d3.axisBottom(lamS).ticks(4, ".2~f"));
+    svg.append("line").attr("x1", 0).attr("x2", Wp)
+      .attr("y1", coefS(0)).attr("y2", coefS(0))
+      .attr("stroke", "#bbb").attr("stroke-dasharray", "3,3");
+    // one line per variable
+    d3.range(P).forEach(j => {
+      const pts = method === "ols"
+        ? LAMS.map(l => ({ l: l, v: OLSB[j] }))
+        : LAMS.map((l, i) => ({ l: l, v: PATH[method][i][j] }));
+      svg.append("path")
+        .attr("d", d3.line().x(d => lamS(d.l)).y(d => coefS(d.v))(pts))
+        .attr("fill", "none").attr("stroke", VCOLOR[j]).attr("stroke-width", 1.8);
+    });
+    panels[method] = svg.append("line")     // current-lambda marker
+      .attr("y1", 0).attr("y2", Hp).attr("stroke", "#111").attr("stroke-width", 2);
+  }
+
+  function buildBars() {
+    d3.select("#rp-bars").selectAll("*").remove();
+    const svg = d3.select("#rp-bars").append("svg")
+      .attr("width", Wb + Mb.left + Mb.right).attr("height", Hb + Mb.top + Mb.bottom)
+      .append("g").attr("transform", `translate(${Mb.left},${Mb.top})`);
+    bXS = d3.scaleBand(COLS, [0, Wb]).paddingInner(0.25).paddingOuter(0.1);
+    bYS = coefS.copy().range([Hb, 0]);
+    svg.append("g").call(d3.axisLeft(bYS).ticks(6));
+    axBX = svg.append("g").attr("transform", `translate(0,${bYS(0)})`)
+      .call(d3.axisBottom(bXS).tickSize(0));
+    axBX.selectAll("text")
+      .attr("fill", (d, i) => VCOLOR[i]).attr("font-weight", "bold")
+      .attr("y", 8).attr("dy", "0.71em");
+    gBars = svg.append("g");
+  }
+
+  function drawCurrent() {
+    const B = betasAt(CUR);
+    ["ols", "ridge", "lasso"].forEach(m => panels[m].attr("x1", lamS(CUR)).attr("x2", lamS(CUR)));
+
+    const methods = ["ols", "ridge", "lasso"];
+    const bw = bXS.bandwidth() / 3;
+    const data = [];
+    COLS.forEach((c, j) => methods.forEach((m, k) =>
+      data.push({ key: c + "-" + m, x: bXS(c) + k * bw, v: B[m][j], m: m })));
+    gBars.selectAll("rect.b").data(data, d => d.key).join("rect").attr("class", "b")
+      .attr("x", d => d.x).attr("width", bw - 1)
+      .attr("y", d => Math.min(bYS(0), bYS(d.v)))
+      .attr("height", d => Math.abs(bYS(d.v) - bYS(0)))
+      .attr("fill", d => MCOLOR[d.m]).attr("opacity", 0.9);
+
+    const nz = b => b.filter(v => Math.abs(v) > 1e-9).length;
+    document.getElementById("nz-ols").textContent = nz(B.ols);
+    document.getElementById("nz-ridge").textContent = nz(B.ridge);
+    document.getElementById("nz-lasso").textContent = nz(B.lasso);
+  }
+
+  // -------------------------------------------------------------- controls
+  function wireControls() {
+    const inp = document.getElementById("lam");
+    inp.addEventListener("input", () => {
+      CUR = Math.pow(10, +inp.value);
+      document.getElementById("lamOut").value = CUR.toPrecision(3);
+      drawCurrent();
+    });
+  }
+
+  function showError(err) {
+    console.error(err);
+    const el = document.createElement("div");
+    el.style.cssText = "background:#ffe2e2;border:1px solid #d33;color:#900;" +
+      "padding:10px 14px;margin:10px 0;border-radius:6px;font-weight:bold;";
+    el.textContent = "Applet error: " + ((err && err.message) || err);
+    document.body.prepend(el);
+  }
+
+  function init() {
+    if (init.done) return;                // guard against a double 'load'
+    init.done = true;
+    try {
+      if (typeof d3 === "undefined")
+        throw new Error("d3 did not load — check the d3 <script> tag / your network.");
+      parseData();
+      computePaths();
+      lamS = d3.scaleLog([LAM_MIN, LAM_MAX], [0, Wp]);
+      coefS = d3.scaleLinear(yDomain(), [Hp, 0]);
+      buildPathPanel("#rp-ols", "ols");
+      buildPathPanel("#rp-ridge", "ridge");
+      buildPathPanel("#rp-lasso", "lasso");
+      buildBars();
+      wireControls();
+      document.getElementById("lamOut").value = CUR.toPrecision(3);
+      drawCurrent();
+      // variable legend (colors match the path lines and bar-group labels)
+      document.getElementById("rp-varleg").innerHTML = COLS.map((c, j) =>
+        `<span class="sw" style="background:${VCOLOR[j]}"></span>${c}`).join("");
+      if (window.MathJax && MathJax.startup && MathJax.startup.promise)
+        MathJax.startup.promise.then(() => MathJax.typesetPromise()).catch(() => {});
+    } catch (err) { showError(err); }
+  }
+  window.addEventListener("load", init);
+  </script>
+</head>
+
+<body>
+<div style="font:14px/1.4 system-ui,-apple-system,sans-serif;padding:8px 12px;"><a href="../index.html" style="color:#0072BD;text-decoration:none;">&larr; All STAT 413 applets</a></div>
+
+  <h1>Regularization Paths: OLS, Ridge &amp; Lasso</h1>
+  <p style="max-width:900px">The same car data as the &ldquo;Be the Optimizer&rdquo; applet
+     (32 cars, \(\text{mpg}\) regressed on 10 standardized predictors), but now the computer
+     does the fitting &mdash; once for every \(\lambda\) on a log grid, live in this page.
+     Each colored line is one coefficient \(\hat{\beta}_j(\lambda)\).
+     <span class="rp-hint">Drag the \(\lambda\) slider and watch: ridge only <b>shrinks</b>
+     coefficients smoothly, while lasso sets them <b>exactly to zero</b>, one by one.
+     OLS has no penalty, so \(\lambda\) does nothing to it.</span></p>
+
+  <div class="rp-panels">
+    <div class="rp-panel">
+      <h3>OLS &mdash; \(\lambda\) does nothing</h3>
+      <div class="plotwrap">
+        <div id="rp-ols"></div>
+        <div class="xlab">\(\lambda\)</div>
+        <div class="ylab">\(\hat{\beta}_j\)</div>
+      </div>
+    </div>
+    <div class="rp-panel">
+      <h3>Ridge &mdash; shrinks, never exactly 0</h3>
+      <div class="plotwrap">
+        <div id="rp-ridge"></div>
+        <div class="xlab">\(\lambda\)</div>
+        <div class="ylab">\(\hat{\beta}_j\)</div>
+      </div>
+    </div>
+    <div class="rp-panel">
+      <h3>Lasso &mdash; sparsity: exact zeros</h3>
+      <div class="plotwrap">
+        <div id="rp-lasso"></div>
+        <div class="xlab">\(\lambda\)</div>
+        <div class="ylab">\(\hat{\beta}_j\)</div>
+      </div>
+    </div>
+  </div>
+  <div class="rp-legend" id="rp-varleg"></div>
+
+  <div class="rp-controls">
+    <fieldset>
+      <legend>Penalty strength (log scale)</legend>
+      <div class="rp-row">
+        <label>\(\lambda\)</label>
+        <input type="range" id="lam" min="-2" max="1.0969" step="0.01" value="0">
+        <output id="lamOut"></output>
+      </div>
+    </fieldset>
+    <div class="rp-counts">
+      nonzero coefficients at this \(\lambda\): &nbsp;
+      OLS <b id="nz-ols">10</b> / 10 &nbsp;&middot;&nbsp;
+      Ridge <b id="nz-ridge">10</b> / 10 &nbsp;&middot;&nbsp;
+      <span class="lasso">Lasso <b id="nz-lasso">10</b> / 10</span>
+    </div>
+  </div>
+
+  <div class="rp-panel">
+    <h3 style="text-align:left">Coefficients at the current \(\lambda\)
+      &nbsp;<span style="color:#888">&#9632; OLS</span>
+      &nbsp;<span style="color:#3070B7">&#9632; Ridge</span>
+      &nbsp;<span style="color:#D55E00">&#9632; Lasso</span></h3>
+    <div class="plotwrap">
+      <div id="rp-bars"></div>
+      <div class="ylab">\(\hat{\beta}_j\)</div>
+    </div>
+  </div>
+
+  <div class="rp-eq">
+    <div>\( \text{OLS:} \quad \hat{\beta} = \arg\min_{\beta}\;
+      \frac{1}{n}\sum_{i=1}^{n} \Big( y_i - \sum_{j=1}^{10} \beta_j z_{ij} \Big)^2 \)</div>
+    <div>\( \text{Ridge:} \quad \hat{\beta}(\lambda) = \arg\min_{\beta}\;
+      \text{MSE}(\beta) + \lambda \sum_{j=1}^{10} \beta_j^2 \)
+      <span class="rp-hint">&mdash; closed form; smooth shrinkage</span></div>
+    <div>\( \text{Lasso:} \quad \hat{\beta}(\lambda) = \arg\min_{\beta}\;
+      \text{MSE}(\beta) + \lambda \sum_{j=1}^{10} |\beta_j| \)
+      <span class="rp-hint">&mdash; coordinate descent (soft-thresholding); exact zeros,
+      all 10 gone by \(\lambda \approx 10.3\)</span></div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Why Lasso Zeroes Coefficients &mdash; the Diamond vs the Disk</title>
+  <link rel="stylesheet" href="../styling/global.css">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; color: #222; }
+    h1 { font-size: 24px; }
+    .lg-panels { display: flex; flex-wrap: wrap; gap: 30px; align-items: flex-start; }
+    .lg-panel h3 { font-size: 15px; font-weight: bold; margin: 10px 0 2px 0; text-align: center; }
+    .lg-status { font-size: 14px; margin: 2px 0 0 0; min-height: 22px; text-align: center; }
+    .lg-status .corner { color: #D55E00; font-weight: bold; }
+    .lg-status .tangent { color: #3070B7; font-weight: bold; }
+    .lg-status .slack { color: #377e22; font-weight: bold; }
+    .lg-read { font-size: 14px; font-variant-numeric: tabular-nums; text-align: center; }
+    .lg-legend { font-size: 13px; color: #555; margin: 10px 0; max-width: 880px; }
+    .lg-legend .sw { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin: 0 4px 0 12px; }
+    .lg-controls { margin: 14px 0; display: flex; flex-wrap: wrap; gap: 28px; align-items: center; }
+    .lg-controls fieldset { border: 1px solid #ccc; border-radius: 6px; padding: 10px 16px; }
+    .lg-controls legend { font-weight: bold; font-size: 13px; padding: 0 6px; }
+    .lg-row { font-size: 14px; }
+    .lg-row input[type="range"] { vertical-align: middle; width: 320px; }
+    .lg-row output { font-variant-numeric: tabular-nums; min-width: 56px; display: inline-block; }
+    .lg-eq { background: #f6f6f8; border: 1px solid #e0e0e6; border-radius: 6px;
+             padding: 12px 16px; margin-top: 12px; font-size: 15px; line-height: 2.2; max-width: 900px; }
+    .lg-hint { font-size: 13px; color: #777; font-style: italic; }
+    .plotwrap { position: relative; display: inline-block; }
+    .plotwrap .xlab { position: absolute; left: 50%; bottom: 2px; transform: translateX(-50%); font-size: 14px; }
+    .plotwrap .ylab { position: absolute; left: 8px; top: -6px; font-size: 14px; }
+  </style>
+
+  <script src="https://d3js.org/d3.v7.js"></script>
+  <script>window.MathJax = { tex: { inlineMath: [['\\(', '\\)'], ['$', '$']] }, svg: { fontCache: 'global' } };</script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+
+  <script>
+  // ===========================================================================
+  // The classic "diamond vs disk" picture, on REAL data:
+  //   mpg (centered) ~ beta_1 * z(wt) + beta_2 * z(qsec)     [mtcars, no intercept]
+  // Constrained view of lasso and ridge with a shared budget t:
+  //   Lasso: minimize MSE(beta)  s.t.  |beta_1| + |beta_2| <= t      (diamond)
+  //   Ridge: minimize MSE(beta)  s.t.  beta_1^2 + beta_2^2 <= t^2    (disk)
+  // The solution is where the LOWEST MSE contour touches the region.
+  // A diamond gets touched at a CORNER for a whole range of t (here t <= ~3.0)
+  //   -> beta_2 = 0 EXACTLY (sparsity).
+  // A disk is smooth, so the touch point is generic -> both betas nonzero.
+  // OLS optimum here: beta ~ (-4.86, +1.63); constraint goes slack when t
+  // exceeds ||beta_OLS|| (L1: 6.49, L2: 5.12) and both solutions become OLS.
+  // ===========================================================================
+
+  // ---- DATA (swap here): mtcars wt & qsec vs mpg ---------------------------
+  // rows: [wt, qsec, mpg]  (1974 Motor Trend road tests; factual data)
+  const RAW = [
+    [2.62,16.46,21],[2.875,17.02,21],[2.32,18.61,22.8],[3.215,19.44,21.4],
+    [3.44,17.02,18.7],[3.46,20.22,18.1],[3.57,15.84,14.3],[3.19,20,24.4],
+    [3.15,22.9,22.8],[3.44,18.3,19.2],[3.44,18.9,17.8],[4.07,17.4,16.4],
+    [3.73,17.6,17.3],[3.78,18,15.2],[5.25,17.98,10.4],[5.424,17.82,10.4],
+    [5.345,17.42,14.7],[2.2,19.47,32.4],[1.615,18.52,30.4],[1.835,19.9,33.9],
+    [2.465,20.01,21.5],[3.52,16.87,15.5],[3.435,17.3,15.2],[3.84,15.41,13.3],
+    [3.845,17.05,19.2],[1.935,18.9,27.3],[2.14,16.7,26],[1.513,16.9,30.4],
+    [3.17,14.5,15.8],[2.77,15.5,19.7],[3.57,14.6,15],[2.78,18.6,21.4]
+  ];
+  const VNAMES = ["wt", "qsec"];
+  const T_MIN = 0.2, T_MAX = 7, T_START = 2.0;
+  // ---------------------------------------------------------------------------
+
+  const C = { l1: "#D55E00", l2: "#3070B7", ols: "#377e22", sol: "#111",
+              iso: "#b9b9c9", touch: "#7b3294", path: "#666" };
+  const Wp = 340, Hp = 340, M = { top: 14, right: 14, bottom: 42, left: 50 };
+  const XDOM = [-8, 3], YDOM = [-4.5, 6.5];      // equal spans -> circles stay circles
+
+  let X = [], Y = [];          // standardized predictors, centered response
+  let OLSB = [];               // 2-var OLS optimum
+  let T = T_START;
+  let xS, yS, panels = {};     // per-panel dynamic selections
+  let PATHS = { l1: [], l2: [] };
+
+  // -------------------------------------------------------------- maths
+  function prepData() {
+    const n = RAW.length;
+    const mean = a => a.reduce((s, v) => s + v, 0) / a.length;
+    const mpg = RAW.map(r => r[2]), ym = mean(mpg);
+    Y = mpg.map(v => v - ym);
+    X = [];
+    const cols = [RAW.map(r => r[0]), RAW.map(r => r[1])];
+    const mus = cols.map(mean);
+    const sds = cols.map((c, j) =>
+      Math.sqrt(c.reduce((s, v) => s + (v - mus[j]) * (v - mus[j]), 0) / n));
+    for (let i = 0; i < n; i++)
+      X.push([(RAW[i][0] - mus[0]) / sds[0], (RAW[i][1] - mus[1]) / sds[1]]);
+  }
+  function mse(b1, b2) {
+    let s = 0;
+    const n = X.length;
+    for (let i = 0; i < n; i++) {
+      const r = Y[i] - X[i][0] * b1 - X[i][1] * b2;
+      s += r * r;
+    }
+    return s / n;
+  }
+  function olsSolve() {
+    const n = X.length;
+    let a11 = 0, a12 = 0, a22 = 0, b1 = 0, b2 = 0;
+    for (let i = 0; i < n; i++) {
+      a11 += X[i][0] * X[i][0]; a12 += X[i][0] * X[i][1]; a22 += X[i][1] * X[i][1];
+      b1 += X[i][0] * Y[i]; b2 += X[i][1] * Y[i];
+    }
+    const det = a11 * a22 - a12 * a12;
+    return [(b1 * a22 - b2 * a12) / det, (a11 * b2 - a12 * b1) / det];
+  }
+  // lasso constrained: interior, else best point on the diamond's 4 edges
+  function l1solve(t) {
+    if (Math.abs(OLSB[0]) + Math.abs(OLSB[1]) <= t) return OLSB.slice();
+    let best = null;
+    for (const [s1, s2] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+      let lo = 0, hi = 1;                       // edge: (s1 t (1-u), s2 t u)
+      for (let it = 0; it < 70; it++) {
+        const m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3;
+        (mse(s1 * t * (1 - m1), s2 * t * m1) < mse(s1 * t * (1 - m2), s2 * t * m2))
+          ? hi = m2 : lo = m1;
+      }
+      const u = (lo + hi) / 2;
+      let cand = [s1 * t * (1 - u), s2 * t * u];
+      // snap to the corner when the optimum sits at the segment end
+      if (u < 1e-6) cand = [s1 * t, 0];
+      if (u > 1 - 1e-6) cand = [0, s2 * t];
+      if (!best || mse(cand[0], cand[1]) < mse(best[0], best[1])) best = cand;
+    }
+    return best;
+  }
+  // ridge constrained: interior, else minimize on the circle (grid + refine)
+  function l2solve(t) {
+    if (Math.hypot(OLSB[0], OLSB[1]) <= t) return OLSB.slice();
+    let bth = 0, bv = Infinity;
+    for (let i = 0; i < 2000; i++) {
+      const th = i / 2000 * 2 * Math.PI;
+      const v = mse(t * Math.cos(th), t * Math.sin(th));
+      if (v < bv) { bv = v; bth = th; }
+    }
+    let lo = bth - 0.01, hi = bth + 0.01;       // local ternary refine
+    for (let it = 0; it < 60; it++) {
+      const m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3;
+      (mse(t * Math.cos(m1), t * Math.sin(m1)) < mse(t * Math.cos(m2), t * Math.sin(m2)))
+        ? hi = m2 : lo = m1;
+    }
+    const th = (lo + hi) / 2;
+    return [t * Math.cos(th), t * Math.sin(th)];
+  }
+
+  // -------------------------------------------------------------- build
+  function buildPanel(id, key) {
+    d3.select(id).selectAll("*").remove();
+    const svg = d3.select(id).append("svg")
+      .attr("width", Wp + M.left + M.right).attr("height", Hp + M.top + M.bottom)
+      .append("g").attr("transform", `translate(${M.left},${M.top})`);
+    svg.append("defs").append("clipPath").attr("id", "lg-clip-" + key)
+      .append("rect").attr("width", Wp).attr("height", Hp);
+    const gc = svg.append("g").attr("clip-path", `url(#lg-clip-${key})`);
+
+    // MSE contours (power-spaced levels, same recipe as the regression GD applet)
+    const NGRID = 90;
+    const values = new Array(NGRID * NGRID);
+    let zmin = Infinity, zmax = -Infinity;
+    for (let j = 0; j < NGRID; j++) {
+      const b2 = YDOM[0] + (j / (NGRID - 1)) * (YDOM[1] - YDOM[0]);
+      for (let i = 0; i < NGRID; i++) {
+        const b1 = XDOM[0] + (i / (NGRID - 1)) * (XDOM[1] - XDOM[0]);
+        const z = mse(b1, b2);
+        values[j * NGRID + i] = z;
+        if (z < zmin) zmin = z;
+        if (z > zmax) zmax = z;
+      }
+    }
+    const zcap = zmin + 0.6 * (zmax - zmin);
+    const levels = d3.range(1, 13).map(k => zmin + (zcap - zmin) * Math.pow(k / 13, 1.9));
+    const sx = d3.scaleLinear([0, NGRID - 1], [0, Wp]);
+    const sy = d3.scaleLinear([0, NGRID - 1], [Hp, 0]);
+    const toPath = c => {
+      let p = "";
+      for (const poly of c.coordinates)
+        for (const ring of poly) {
+          ring.forEach((pt, k) => { p += (k === 0 ? "M" : "L") + sx(pt[0]) + "," + sy(pt[1]); });
+          p += "Z";
+        }
+      return p;
+    };
+    gc.selectAll("path.iso").data(d3.contours().size([NGRID, NGRID]).thresholds(levels)(values))
+      .join("path").attr("class", "iso").attr("d", toPath)
+      .attr("fill", "none").attr("stroke", C.iso).attr("stroke-width", 1.1);
+    // stash for the live "touching contour"
+    panels[key] = { grid: { values: values, n: NGRID, sx: sx, sy: sy, toPath: toPath } };
+
+    // axes + zero lines
+    svg.append("g").call(d3.axisLeft(yS).ticks(6));
+    svg.append("g").attr("transform", `translate(0,${Hp})`).call(d3.axisBottom(xS).ticks(6));
+    gc.append("line").attr("x1", xS(0)).attr("x2", xS(0)).attr("y1", 0).attr("y2", Hp)
+      .attr("stroke", "#ccc");
+    gc.append("line").attr("x1", 0).attr("x2", Wp).attr("y1", yS(0)).attr("y2", yS(0))
+      .attr("stroke", "#ccc");
+
+    const col = key === "l1" ? C.l1 : C.l2;
+    panels[key].region = gc.append("path")
+      .attr("fill", col).attr("fill-opacity", 0.13).attr("stroke", col).attr("stroke-width", 2);
+    panels[key].touch = gc.append("path")
+      .attr("fill", "none").attr("stroke", C.touch).attr("stroke-width", 2.2);
+    // solution path over all budgets t (precomputed)
+    panels[key].path = gc.append("path")
+      .attr("fill", "none").attr("stroke", C.path).attr("stroke-width", 1.4)
+      .attr("stroke-dasharray", "5,4");
+    // OLS star
+    gc.append("path").attr("d", d3.symbol(d3.symbolStar, 150)())
+      .attr("transform", `translate(${xS(OLSB[0])},${yS(OLSB[1])})`)
+      .attr("fill", C.ols).attr("stroke", "#fff").attr("stroke-width", 1);
+    panels[key].dot = gc.append("circle").attr("r", 6)
+      .attr("fill", C.sol).attr("stroke", "#fff").attr("stroke-width", 1.5);
+  }
+
+  function computePaths() {
+    PATHS = { l1: [], l2: [] };
+    for (let i = 0; i <= 130; i++) {
+      const t = T_MIN + (i / 130) * (T_MAX - T_MIN);
+      PATHS.l1.push(l1solve(t));
+      PATHS.l2.push(l2solve(t));
+    }
+  }
+
+  // -------------------------------------------------------------- update
+  function fmtB(v) { return (v >= 0 ? "+" : "") + v.toFixed(3); }
+  function drawCurrent() {
+    const sols = { l1: l1solve(T), l2: l2solve(T) };
+    ["l1", "l2"].forEach(key => {
+      const P = panels[key], s = sols[key];
+      // constraint region
+      if (key === "l1") {
+        P.region.attr("d",
+          `M${xS(T)},${yS(0)} L${xS(0)},${yS(T)} L${xS(-T)},${yS(0)} L${xS(0)},${yS(-T)} Z`);
+      } else {
+        const r = xS(T) - xS(0);
+        P.region.attr("d", `M${xS(T)},${yS(0)}
+          A${r},${r} 0 1 0 ${xS(-T)},${yS(0)} A${r},${r} 0 1 0 ${xS(T)},${yS(0)} Z`);
+      }
+      // touching contour: the MSE level set through the solution
+      const g = P.grid;
+      const lvl = mse(s[0], s[1]);
+      const cs = d3.contours().size([g.n, g.n]).thresholds([lvl])(g.values);
+      P.touch.attr("d", cs.length ? g.toPath(cs[0]) : "");
+      // solution path + dot
+      P.path.attr("d", d3.line().x(d => xS(d[0])).y(d => yS(d[1]))(PATHS[key]));
+      P.dot.attr("cx", xS(s[0])).attr("cy", yS(s[1]));
+    });
+
+    // readouts + status
+    const slackL1 = Math.abs(OLSB[0]) + Math.abs(OLSB[1]) <= T;
+    const slackL2 = Math.hypot(OLSB[0], OLSB[1]) <= T;
+    document.getElementById("r-l1").innerHTML =
+      `β̂₁ = <b>${fmtB(sols.l1[0])}</b> &nbsp; β̂₂ = <b>${fmtB(sols.l1[1])}</b>` +
+      ` &nbsp; MSE = <b>${mse(sols.l1[0], sols.l1[1]).toFixed(3)}</b>`;
+    document.getElementById("r-l2").innerHTML =
+      `β̂₁ = <b>${fmtB(sols.l2[0])}</b> &nbsp; β̂₂ = <b>${fmtB(sols.l2[1])}</b>` +
+      ` &nbsp; MSE = <b>${mse(sols.l2[0], sols.l2[1]).toFixed(3)}</b>`;
+    const corner = Math.min(Math.abs(sols.l1[0]), Math.abs(sols.l1[1])) < 1e-6 && !slackL1;
+    document.getElementById("s-l1").innerHTML = slackL1
+      ? '<span class="slack">constraint slack &mdash; solution = OLS</span>'
+      : corner
+        ? '<span class="corner">CORNER &rarr; one coefficient is exactly 0 (sparsity!)</span>'
+        : 'touching on an edge &mdash; both nonzero';
+    document.getElementById("s-l2").innerHTML = slackL2
+      ? '<span class="slack">constraint slack &mdash; solution = OLS</span>'
+      : '<span class="tangent">smooth tangent point &mdash; both coefficients nonzero</span>';
+  }
+
+  // -------------------------------------------------------------- controls
+  function wireControls() {
+    const inp = document.getElementById("tbud");
+    inp.addEventListener("input", () => {
+      T = +inp.value;
+      document.getElementById("tOut").value = T.toFixed(2);
+      drawCurrent();
+    });
+  }
+
+  function showError(err) {
+    console.error(err);
+    const el = document.createElement("div");
+    el.style.cssText = "background:#ffe2e2;border:1px solid #d33;color:#900;" +
+      "padding:10px 14px;margin:10px 0;border-radius:6px;font-weight:bold;";
+    el.textContent = "Applet error: " + ((err && err.message) || err);
+    document.body.prepend(el);
+  }
+
+  function init() {
+    if (init.done) return;
+    init.done = true;
+    try {
+      if (typeof d3 === "undefined")
+        throw new Error("d3 did not load — check the d3 <script> tag / your network.");
+      if (typeof d3.contours !== "function")
+        throw new Error("this d3 build is missing d3.contours.");
+      prepData();
+      OLSB = olsSolve();
+      xS = d3.scaleLinear(XDOM, [0, Wp]);
+      yS = d3.scaleLinear(YDOM, [Hp, 0]);
+      computePaths();
+      buildPanel("#lg-l1", "l1");
+      buildPanel("#lg-l2", "l2");
+      wireControls();
+      document.getElementById("tOut").value = T.toFixed(2);
+      drawCurrent();
+      if (window.MathJax && MathJax.startup && MathJax.startup.promise)
+        MathJax.startup.promise.then(() => MathJax.typesetPromise()).catch(() => {});
+    } catch (err) { showError(err); }
+  }
+  window.addEventListener("load", init);
+  </script>
+</head>
+
+<body>
+<div style="font:14px/1.4 system-ui,-apple-system,sans-serif;padding:8px 12px;"><a href="../index.html" style="color:#0072BD;text-decoration:none;">&larr; All STAT 413 applets</a></div>
+
+  <h1>Why Lasso Zeroes Coefficients: the Diamond vs the Disk</h1>
+  <p style="max-width:900px">Real data again: \(\text{mpg}\) (centered, so there is no
+     intercept to learn) regressed on the two best predictors, standardized \(\text{wt}\)
+     and \(\text{qsec}\). The gray ellipses are the contours of \(\text{MSE}(\beta_1, \beta_2)\)
+     and the green star is the OLS optimum. Both penalties can be written as a <b>budget
+     constraint</b>: the solution (black dot) is the point inside the shaded region where the
+     <b>lowest MSE contour</b> (purple) first touches it.
+     <span class="lg-hint">Shrink the budget \(t\): the diamond gets touched at a
+     <b>corner</b>, pinning \(\beta_2 = 0\) exactly &mdash; the disk never does that.</span></p>
+
+  <div class="lg-panels">
+    <div class="lg-panel">
+      <h3>Lasso: \( |\beta_1| + |\beta_2| \le t \) &mdash; diamond</h3>
+      <div class="plotwrap">
+        <div id="lg-l1"></div>
+        <div class="xlab">\(\beta_1\) (wt)</div>
+        <div class="ylab">\(\beta_2\) (qsec)</div>
+      </div>
+      <div class="lg-read" id="r-l1"></div>
+      <div class="lg-status" id="s-l1"></div>
+    </div>
+    <div class="lg-panel">
+      <h3>Ridge: \( \beta_1^2 + \beta_2^2 \le t^2 \) &mdash; disk</h3>
+      <div class="plotwrap">
+        <div id="lg-l2"></div>
+        <div class="xlab">\(\beta_1\) (wt)</div>
+        <div class="ylab">\(\beta_2\) (qsec)</div>
+      </div>
+      <div class="lg-read" id="r-l2"></div>
+      <div class="lg-status" id="s-l2"></div>
+    </div>
+  </div>
+
+  <div class="lg-legend">
+    <span class="sw" style="background:#b9b9c9"></span>MSE contours
+    <span class="sw" style="background:#7b3294"></span>lowest contour touching the region
+    <span class="sw" style="background:#666"></span>solution path as \(t\) varies (dashed)
+    <span style="color:#377e22">&nbsp;&#9733;</span> OLS optimum
+    <span style="color:#111">&nbsp;&#9679;</span> constrained solution
+  </div>
+
+  <div class="lg-controls">
+    <fieldset>
+      <legend>Budget</legend>
+      <div class="lg-row">
+        <label>\(t\)</label>
+        <input type="range" id="tbud" min="0.2" max="7" step="0.02" value="2.0">
+        <output id="tOut"></output>
+      </div>
+      <div class="lg-hint">on this data the diamond solution sits on a corner for all
+        \(t \lesssim 3.2\); the constraint goes slack past \(\|\hat{\beta}_{OLS}\|\)
+        (L1: 6.50, L2: 5.13)</div>
+    </fieldset>
+  </div>
+
+  <div class="lg-eq">
+    <div>\( \text{Lasso (constrained):} \quad \hat{\beta}(t) = \arg\min_{\beta}\;
+      \frac{1}{n}\sum_{i=1}^{n}\Big(y_i - \beta_1 z_{i1} - \beta_2 z_{i2}\Big)^2
+      \quad \text{s.t.} \quad |\beta_1| + |\beta_2| \le t \)</div>
+    <div>\( \text{Ridge (constrained):} \quad \hat{\beta}(t) = \arg\min_{\beta}\;
+      \text{MSE}(\beta) \quad \text{s.t.} \quad \beta_1^2 + \beta_2^2 \le t^2 \)</div>
+    <div class="lg-hint">These are equivalent to the penalized forms
+      \( \text{MSE}(\beta) + \lambda \|\beta\|_1 \) and
+      \( \text{MSE}(\beta) + \lambda \|\beta\|_2^2 \) from the Regularization Paths applet:
+      every budget \(t\) corresponds to some \(\lambda\) (small \(t\) &harr; large
+      \(\lambda\)). The corner is why lasso induces sparsity and ridge does not.</div>
+  </div>
+</body>
+</html>

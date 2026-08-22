@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gradient Descent in 2D &mdash; partial derivatives, step size &amp; initialization</title>
+  <link rel="stylesheet" href="../styling/global.css">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; color: #222; }
+    h1 { font-size: 24px; }
+    .gd-panel h3 { font-size: 15px; font-weight: bold; margin: 14px 0 4px 0; }
+    .gd-controls { margin: 18px 0; display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; }
+    .gd-controls fieldset { border: 1px solid #ccc; border-radius: 6px; padding: 10px 14px; }
+    .gd-controls legend { font-weight: bold; font-size: 13px; padding: 0 6px; }
+    .gd-row { margin: 6px 0; font-size: 14px; }
+    .gd-row input[type="range"] { vertical-align: middle; width: 200px; }
+    .gd-row output { font-variant-numeric: tabular-nums; min-width: 60px; display: inline-block; }
+    .gd-buttons button { padding: 8px 18px; font-size: 14px; margin-right: 8px; cursor: pointer; }
+    .gd-readout { font-variant-numeric: tabular-nums; margin: 8px 0; }
+    .gd-readout .state-conv { color: #377e22; font-weight: bold; }
+    .gd-readout .state-div { color: #c22; font-weight: bold; }
+    .gd-readout .state-max { color: #b26a00; font-weight: bold; }
+    .gd-legend { font-size: 13px; color: #555; margin: 2px 0 10px 0; }
+    .gd-legend .sw { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin: 0 4px 0 10px; }
+    .gd-eq { background: #f6f6f8; border: 1px solid #e0e0e6; border-radius: 6px;
+             padding: 12px 16px; margin-top: 8px; font-size: 15px; line-height: 2.0; max-width: 902px; }
+    .gd-hint { font-size: 13px; color: #777; font-style: italic; }
+    /* MathJax-typeset axis labels positioned over the SVG panels */
+    .plotwrap { position: relative; display: inline-block; }
+    .plotwrap .xlab { position: absolute; left: 50%; bottom: 2px; transform: translateX(-50%); font-size: 14px; }
+    .plotwrap .ylab { position: absolute; left: 12px; top: -6px; font-size: 14px; }
+    /* .centered pins the label to the MIDDLE of the y-axis instead of parking it
+       above the panel; the exact `top` is set in build() from the panel geometry,
+       and translateY(-50%) then centres the label's own height on that point. */
+    .plotwrap .ylab.centered { transform: translateY(-50%); }
+  </style>
+
+  <script src="https://d3js.org/d3.v7.js"></script>
+  <script>window.MathJax = { tex: { inlineMath: [['\\(', '\\)'], ['$', '$']] }, svg: { fontCache: 'global' } };</script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+
+  <script>
+  // ===========================================================================
+  // Gradient descent in TWO dimensions, on plain loss functions L(x, y):
+  //   x^{(t+1)} = x^{(t)} - alpha * dL/dx(x^{(t)}, y^{(t)})
+  //   y^{(t+1)} = y^{(t)} - alpha * dL/dy(x^{(t)}, y^{(t)})
+  // Same lessons as the 1D applet, plus one that only exists in 2D:
+  //   - elliptical bowl : curvature differs by direction, so the STEEPEST
+  //     direction sets the alpha limit -> zigzag across the valley, then
+  //     divergence in y first (here: diverges once alpha > 1/2, not 1)
+  //   - V-cone          : |.| kinks -> bounces forever, amplitude ~ alpha
+  //   - double well / wavy bowl : initialization picks the basin
+  //   - x^4 + y^4       : flat bottom -> gradient vanishes, progress crawls
+  // ===========================================================================
+
+  // ---- DATA (swap here): the functions on the menu -------------------------
+  // Each entry: label, LaTeX (L AND both partials), f, fx = df/dx, fy = df/dy,
+  // x/y domains, default start p0. Everything else is derived.
+  const FUNCS = [
+    { id: "bowl", label: "Elliptical bowl",
+      tex: "L(\\beta_1,\\beta_2)=(\\beta_1-1)^2+2\\left(\\beta_2+\\tfrac{1}{2}\\right)^2+2,\\qquad \\frac{\\partial L(\\beta_1^{(t)}, \\beta_2^{(t)})}{\\partial \\beta_1}=2(\\beta_1-1),\\quad \\frac{\\partial L(\\beta_1^{(t)}, \\beta_2^{(t)})}{\\partial \\beta_2}=4\\left(\\beta_2+\\tfrac{1}{2}\\right)",
+      f:  (x, y) => (x - 1) * (x - 1) + 2 * (y + 0.5) * (y + 0.5) + 2,
+      fx: (x, y) => 2 * (x - 1),
+      fy: (x, y) => 4 * (y + 0.5),
+      xdom: [-4, 6], ydom: [-3.5, 3.5], p0: [-3, 2.5] },
+    { id: "vee", label: "V-cone (kinks)",
+      tex: "L(\\beta_1,\\beta_2)=|\\beta_1-1|+|\\beta_2|+2,\\qquad \\frac{\\partial L(\\beta_1,\\beta_2)}{\\partial \\beta_1}=\\mathrm{sign}(\\beta_1-1) \\text{ for } \\beta_1 \\ne 1,\\quad \\frac{\\partial L(\\beta_1,\\beta_2)}{\\partial \\beta_2}=\\mathrm{sign}(\\beta_2) \\text{ for } \\beta_2 \\ne 0",
+      f:  (x, y) => Math.abs(x - 1) + Math.abs(y) + 2,
+      fx: (x, y) => Math.sign(x - 1),
+      fy: (x, y) => Math.sign(y),
+      xdom: [-4, 6], ydom: [-3.5, 3.5], p0: [-3, 2.5] },
+    { id: "well", label: "Double well",
+      tex: "L(\\beta_1,\\beta_2)=(\\beta_1^2-1)^2+0.2\\beta_1+\\beta_2^2,\\qquad \\frac{\\partial L(\\beta_1^{(t)}, \\beta_2^{(t)})}{\\partial \\beta_1}=4\\beta_1(\\beta_1^2-1)+0.2,\\quad \\frac{\\partial L(\\beta_1^{(t)}, \\beta_2^{(t)})}{\\partial \\beta_2}=2\\beta_2",
+      f:  (x, y) => { const u = x * x - 1; return u * u + 0.2 * x + y * y; },
+      fx: (x, y) => 4 * x * (x * x - 1) + 0.2,
+      fy: (x, y) => 2 * y,
+      xdom: [-2, 2], ydom: [-1.6, 1.6], p0: [-1.8, 1.2] },
+    { id: "wavy", label: "Wavy bowl (many local minima)",
+      tex: "L(\\beta_1,\\beta_2)=0.3(\\beta_1^2+\\beta_2^2)+\\sin 3\\beta_1+\\sin 3\\beta_2,\\qquad \\frac{\\partial L(\\beta_1^{(t)}, \\beta_2^{(t)})}{\\partial \\beta_1}=0.6\\beta_1+3\\cos 3\\beta_1,\\quad \\frac{\\partial L(\\beta_1^{(t)}, \\beta_2^{(t)})}{\\partial \\beta_2}=0.6\\beta_2+3\\cos 3\\beta_2",
+      f:  (x, y) => 0.3 * (x * x + y * y) + Math.sin(3 * x) + Math.sin(3 * y),
+      fx: (x, y) => 0.6 * x + 3 * Math.cos(3 * x),
+      fy: (x, y) => 0.6 * y + 3 * Math.cos(3 * y),
+      xdom: [-4, 4], ydom: [-4, 4], p0: [-3.5, 3] },
+    { id: "quartic", label: "Flat bottom",
+      tex: "L(\\beta_1,\\beta_2)=\\beta_1^4+\\beta_2^4,\\qquad \\frac{\\partial L(\\beta_1^{(t)}, \\beta_2^{(t)})}{\\partial \\beta_1}=4\\beta_1^3,\\quad \\frac{\\partial L(\\beta_1^{(t)}, \\beta_2^{(t)})}{\\partial \\beta_2}=4\\beta_2^3",
+      f:  (x, y) => x * x * x * x + y * y * y * y,
+      fx: (x, y) => 4 * x * x * x,
+      fy: (x, y) => 4 * y * y * y,
+      xdom: [-1.8, 1.8], ydom: [-1.8, 1.8], p0: [-1.6, 1.4] }
+  ];
+  // ---------------------------------------------------------------------------
+
+  // ---- geometry & colors ----
+  const Wp = 460, Hp = 380, M  = { top: 16, right: 16, bottom: 42, left: 56 };
+  const Wt = 460, Ht = 130, Mt = { top: 10, right: 16, bottom: 34, left: 56 };
+  const C = { path: "#D55E00", ball: "#111", grad: "#377e22", star: "#377e22", target: "#999" };
+  // Contour grid resolution. Keep this ODD: every domain here is symmetric about
+  // its minimum, so an EVEN NG puts the minimum at half-integer index (44.5 with
+  // NG=90) where the two straddling cells are bit-identical and the strict
+  // minima test below rejected both -> no stars at all. An odd NG lands the
+  // minimum exactly on a grid cell.
+  const NG = 91;
+  const MAXIT = 1000;                  // give up after this many iterations
+
+  // ---- state ----
+  let F = FUNCS[0];
+  let ZEXT = [0, 1];                   // L-extent over the grid
+  let MINIMA = [];                     // grid local minima
+  let START = { x: FUNCS[0].p0[0], y: FUNCS[0].p0[1] };
+  let S = { x: 0, y: 0, iter: 0, path: [], state: "running", playing: false };
+  let timer = null;
+
+  let xS, yS, tXS, tYS;
+  let gStars, gDyn, gTraceAxisX, gTrace;
+
+  function alpha() { return Math.pow(10, +document.getElementById("lr").value); }
+  function fmt(v) {
+    if (!isFinite(v)) return "&infin;";
+    return Math.abs(v) >= 1e4 ? v.toExponential(2) : v.toFixed(4);
+  }
+
+  // -------------------------------------------------------------- derive from F
+  function gridValues() {
+    const [xlo, xhi] = F.xdom, [ylo, yhi] = F.ydom;
+    const values = new Array(NG * NG);
+    let zmin = Infinity, zmax = -Infinity;
+    for (let j = 0; j < NG; j++) {
+      const y = ylo + (j / (NG - 1)) * (yhi - ylo);
+      for (let i = 0; i < NG; i++) {
+        const x = xlo + (i / (NG - 1)) * (xhi - xlo);
+        const z = F.f(x, y);
+        values[j * NG + i] = z;
+        if (z < zmin) zmin = z;
+        if (z > zmax) zmax = z;
+      }
+    }
+    ZEXT = [zmin, zmax];
+    // Local minima: grid cells below all 8 neighbours. A strictly-lower neighbour
+    // always disqualifies; an EQUAL neighbour only disqualifies if it comes first
+    // in scan order. That tie-break means a minimum landing exactly between two
+    // cells (or a flat plateau) still yields ONE star instead of none, so this no
+    // longer depends on NG being odd.
+    MINIMA = [];
+    for (let j = 1; j < NG - 1; j++)
+      for (let i = 1; i < NG - 1; i++) {
+        const v = values[j * NG + i];
+        let isMin = true;
+        for (let dj = -1; dj <= 1 && isMin; dj++)
+          for (let di = -1; di <= 1; di++) {
+            if (di === 0 && dj === 0) continue;
+            const n = values[(j + dj) * NG + (i + di)];
+            const earlier = dj < 0 || (dj === 0 && di < 0);
+            if (n < v || (n === v && earlier)) { isMin = false; break; }
+          }
+        if (isMin) MINIMA.push({
+          x: xlo + (i / (NG - 1)) * (xhi - xlo),
+          y: ylo + (j / (NG - 1)) * (yhi - ylo)
+        });
+      }
+    return values;
+  }
+
+  // -------------------------------------------------------------- descent core
+  function resetDescent() {
+    S.x = START.x; S.y = START.y; S.iter = 0; S.state = "running";
+    S.path = [{ x: S.x, y: S.y, fv: F.f(S.x, S.y) }];
+  }
+
+  function stepOnce() {
+    if (S.state !== "running") return;
+    const a = alpha();
+    const gx = F.fx(S.x, S.y), gy = F.fy(S.x, S.y);
+    S.x -= a * gx; S.y -= a * gy; S.iter += 1;
+    S.path.push({ x: S.x, y: S.y, fv: F.f(S.x, S.y) });
+    const span = Math.max(F.xdom[1] - F.xdom[0], F.ydom[1] - F.ydom[0]);
+    const cx = (F.xdom[0] + F.xdom[1]) / 2, cy = (F.ydom[0] + F.ydom[1]) / 2;
+    if (!isFinite(S.x) || !isFinite(S.y) || Math.hypot(S.x - cx, S.y - cy) > 50 * span)
+      S.state = "diverged";
+    else if (alpha() * Math.hypot(F.fx(S.x, S.y), F.fy(S.x, S.y)) < 1e-7)
+      S.state = "converged";
+    else if (S.iter >= MAXIT)
+      S.state = "maxiter";
+  }
+
+  // -------------------------------------------------------------- build panels
+  function build() {
+    ["#gd-main", "#gd-trace"].forEach(s => d3.select(s).selectAll("*").remove());
+
+    const values = gridValues();
+    xS = d3.scaleLinear(F.xdom, [0, Wp]);
+    yS = d3.scaleLinear(F.ydom, [Hp, 0]);
+
+    // ---- main panel: contours of L, minima stars, dynamic layer, drag overlay
+    const svg = d3.select("#gd-main").append("svg")
+      .attr("width", Wp + M.left + M.right).attr("height", Hp + M.top + M.bottom)
+      .append("g").attr("transform", `translate(${M.left},${M.top})`);
+    svg.append("defs").append("clipPath").attr("id", "gd2-clip")
+      .append("rect").attr("width", Wp).attr("height", Hp);
+    // arrowhead for the -grad arrow
+    svg.select("defs").append("marker").attr("id", "gd2-arrow")
+      .attr("viewBox", "0 0 10 10").attr("refX", 8).attr("refY", 5)
+      .attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto-start-reverse")
+      .append("path").attr("d", "M 0 0 L 10 5 L 0 10 z").attr("fill", C.grad);
+
+    // contour lines (power-spaced levels, capped like the regression GD applet)
+    const [zmin, zmax] = ZEXT;
+    const zcap = zmin + 0.85 * (zmax - zmin);
+    const levels = d3.range(1, 15).map(k => zmin + (zcap - zmin) * Math.pow(k / 15, 1.7));
+    const contours = d3.contours().size([NG, NG]).thresholds(levels)(values);
+    const sx = d3.scaleLinear([0, NG - 1], [0, Wp]);
+    const sy = d3.scaleLinear([0, NG - 1], [Hp, 0]);
+    const toPath = c => {
+      let p = "";
+      for (const poly of c.coordinates)
+        for (const ring of poly) {
+          ring.forEach((pt, k) => { p += (k === 0 ? "M" : "L") + sx(pt[0]) + "," + sy(pt[1]); });
+          p += "Z";
+        }
+      return p;
+    };
+    svg.append("g").attr("clip-path", "url(#gd2-clip)")
+      .selectAll("path.iso").data(contours).join("path").attr("class", "iso")
+      .attr("d", toPath).attr("fill", "none")
+      .attr("stroke", (d, i) => d3.interpolateBlues(0.30 + 0.6 * (i / levels.length)))
+      .attr("stroke-width", 1.2);
+
+    svg.append("g").call(d3.axisLeft(yS).ticks(6));
+    svg.append("g").attr("transform", `translate(0,${Hp})`).call(d3.axisBottom(xS).ticks(8));
+    // axis labels are MathJax-typeset HTML (.xlab/.ylab), not SVG text.
+    // The beta_2 label is centred on the axis itself: the axis runs from M.top to
+    // M.top + Hp inside the SVG, so its midpoint is M.top + Hp/2 from the top of
+    // the plotwrap (NOT half the SVG height, which would sit low by M.bottom/2).
+    const ylab = document.getElementById("ylab-b2");
+    if (ylab) ylab.style.top = (M.top + Hp / 2) + "px";
+
+    gStars = svg.append("g");
+    gStars.selectAll("path.min").data(MINIMA).join("path").attr("class", "min")
+      .attr("d", d3.symbol(d3.symbolStar, 120)())
+      .attr("transform", d => `translate(${xS(d.x)},${yS(d.y)})`)
+      .attr("fill", C.star).attr("stroke", "#fff").attr("stroke-width", 1);
+
+    gDyn = svg.append("g").attr("clip-path", "url(#gd2-clip)");
+
+    // transparent overlay: drag anywhere to set the starting point (x0, y0)
+    svg.append("rect").attr("width", Wp).attr("height", Hp)
+      .attr("fill", "transparent").style("cursor", "crosshair")
+      .call(d3.drag()
+        .on("start drag", ev => {
+          pause();
+          START.x = Math.max(F.xdom[0], Math.min(F.xdom[1], xS.invert(ev.x)));
+          START.y = Math.max(F.ydom[0], Math.min(F.ydom[1], yS.invert(ev.y)));
+          resetDescent();
+          drawDynamic();
+        }));
+
+    // ---- trace panel: L(x^{(t)}, y^{(t)}) vs iteration t ----
+    const zpad = 0.05 * (zmax - zmin || 1);
+    const cap = zmax + 0.5 * (zmax - zmin || 1);       // blow-ups exit the top
+    tYS = d3.scaleLinear([zmin - zpad, cap], [Ht, 0]);
+    const svgT = d3.select("#gd-trace").append("svg")
+      .attr("width", Wt + Mt.left + Mt.right).attr("height", Ht + Mt.top + Mt.bottom)
+      .append("g").attr("transform", `translate(${Mt.left},${Mt.top})`);
+    svgT.append("defs").append("clipPath").attr("id", "gd2-tclip")
+      .append("rect").attr("width", Wt).attr("height", Ht);
+    svgT.append("g").call(d3.axisLeft(tYS).ticks(4));
+    gTraceAxisX = svgT.append("g").attr("transform", `translate(0,${Ht})`);
+    // axis labels are MathJax-typeset HTML (.xlab/.ylab), not SVG text
+    svgT.append("line").attr("x1", 0).attr("x2", Wt)
+      .attr("y1", tYS(zmin)).attr("y2", tYS(zmin))
+      .attr("stroke", C.target).attr("stroke-dasharray", "4,3");
+    gTrace = svgT.append("g").attr("clip-path", "url(#gd2-tclip)");
+  }
+
+  // -------------------------------------------------------------- dynamic draw
+  function drawDynamic() {
+    const a = alpha();
+    const gx = F.fx(S.x, S.y), gy = F.fy(S.x, S.y);
+
+    // descent path: connecting line + last 100 dots (fading)
+    gDyn.selectAll("path.trail").data([S.path]).join("path").attr("class", "trail")
+      .attr("d", d3.line().x(d => xS(d.x)).y(d => yS(d.y)))
+      .attr("fill", "none").attr("stroke", C.path).attr("stroke-width", 1.4).attr("opacity", 0.55);
+    const dots = S.path.slice(-100);
+    gDyn.selectAll("circle.dot").data(dots).join("circle").attr("class", "dot")
+      .attr("cx", d => xS(d.x)).attr("cy", d => yS(d.y)).attr("r", 2.6)
+      .attr("fill", C.path).attr("opacity", (d, i) => 0.2 + 0.8 * (i / Math.max(dots.length - 1, 1)));
+
+    // green arrow: the downhill direction -grad L (fixed pixel length,
+    // normalized in PIXEL space so it points correctly even when the two
+    // axes have different pixel-per-unit scales)
+    const kx = Wp / (F.xdom[1] - F.xdom[0]), ky = Hp / (F.ydom[1] - F.ydom[0]);
+    const dxp = -gx * kx, dyp = gy * ky;      // screen y grows downward
+    const pn = Math.hypot(dxp, dyp);
+    const L = pn < 1e-12 ? 0 : 36;
+    const ex = xS(S.x) + (L ? (dxp / pn) * L : 0);
+    const ey = yS(S.y) + (L ? (dyp / pn) * L : 0);
+    gDyn.selectAll("line.grad").data([0]).join("line").attr("class", "grad")
+      .attr("x1", xS(S.x)).attr("y1", yS(S.y)).attr("x2", ex).attr("y2", ey)
+      .attr("stroke", C.grad).attr("stroke-width", 2.5)
+      .attr("marker-end", L ? "url(#gd2-arrow)" : null);
+
+    // dashed preview of the NEXT iterate (x,y) - alpha * grad
+    const xn = S.x - a * gx, yn = S.y - a * gy;
+    gDyn.selectAll("line.next").data([0]).join("line").attr("class", "next")
+      .attr("x1", xS(S.x)).attr("y1", yS(S.y)).attr("x2", xS(xn)).attr("y2", yS(yn))
+      .attr("stroke", C.path).attr("stroke-width", 1.5).attr("stroke-dasharray", "5,4");
+    gDyn.selectAll("circle.nextpt").data([0]).join("circle").attr("class", "nextpt")
+      .attr("cx", xS(xn)).attr("cy", yS(yn)).attr("r", 4)
+      .attr("fill", "none").attr("stroke", C.path).attr("stroke-width", 1.5);
+
+    // the ball
+    gDyn.selectAll("circle.ball").data([0]).join("circle").attr("class", "ball")
+      .attr("cx", xS(S.x)).attr("cy", yS(S.y)).attr("r", 6)
+      .attr("fill", C.ball).attr("stroke", "#fff").attr("stroke-width", 1.5);
+
+    // trace panel
+    tXS = d3.scaleLinear([0, Math.max(30, S.path.length - 1)], [0, Wt]);
+    gTraceAxisX.call(d3.axisBottom(tXS).ticks(8).tickFormat(d3.format("d")));
+    gTrace.selectAll("path.tr").data([S.path]).join("path").attr("class", "tr")
+      .attr("d", d3.line().x((d, i) => tXS(i)).y(d => tYS(d.fv)))
+      .attr("fill", "none").attr("stroke", C.path).attr("stroke-width", 1.6);
+    gTrace.selectAll("circle.trdot").data([S.path[S.path.length - 1]]).join("circle")
+      .attr("class", "trdot")
+      .attr("cx", tXS(S.path.length - 1)).attr("cy", tYS(S.path[S.path.length - 1].fv))
+      .attr("r", 3.5).attr("fill", C.ball);
+
+    updateReadout(a, gx, gy);
+  }
+
+  // labels in the readout are static MathJax (typeset once at load);
+  // only the numeric value spans are updated here
+  function updateReadout(a, gx, gy) {
+    document.getElementById("ro-t").innerHTML = S.iter;
+    document.getElementById("ro-x1").innerHTML = fmt(S.x);
+    document.getElementById("ro-x2").innerHTML = fmt(S.y);
+    document.getElementById("ro-f").innerHTML = fmt(F.f(S.x, S.y));
+    document.getElementById("ro-g1").innerHTML = fmt(gx);
+    document.getElementById("ro-g2").innerHTML = fmt(gy);
+    document.getElementById("ro-s1").innerHTML = fmt(-a * gx);
+    document.getElementById("ro-s2").innerHTML = fmt(-a * gy);
+    const st = document.getElementById("ro-state");
+    if (S.state === "converged")
+      st.innerHTML = ' &nbsp;|&nbsp; <span class="state-conv">converged (step size below 10<sup>&minus;7</sup>)</span>';
+    else if (S.state === "maxiter")
+      st.innerHTML = ' &nbsp;|&nbsp; <span class="state-max">stopped at the ' + MAXIT +
+        '-iteration limit &mdash; not converged</span>';
+    else if (S.state === "diverged")
+      st.innerHTML = ' &nbsp;|&nbsp; <span class="state-div">diverged &mdash; reduce the step size</span>';
+    else st.innerHTML = "";
+  }
+
+  // -------------------------------------------------------------- controls
+  function tick() {
+    stepOnce();
+    drawDynamic();
+    if (S.state !== "running") pause();   // includes the MAXIT cap (set in stepOnce)
+  }
+  // refuse to start when the run is already over (converged / diverged /
+  // hit MAXIT) so the button does not flicker Pause->Play; use Reset instead
+  function play() { if (S.playing || S.state !== "running") return; S.playing = true; document.getElementById("play").textContent = "Pause"; timer = setInterval(tick, 60); }
+  function pause() { S.playing = false; const b = document.getElementById("play"); if (b) b.textContent = "Play"; if (timer) { clearInterval(timer); timer = null; } }
+  function togglePlay() { S.playing ? pause() : play(); }
+
+  function switchFunction() {
+    pause();
+    F = FUNCS.find(fn => fn.id === document.querySelector('input[name="func"]:checked').value);
+    START.x = F.p0[0]; START.y = F.p0[1];
+    resetDescent();
+    build();
+    drawDynamic();
+    const el = document.getElementById("ftex");
+    el.innerHTML = "\\(" + F.tex + "\\)";
+    if (window.MathJax && MathJax.typesetPromise) MathJax.typesetPromise([el]).catch(() => {});
+  }
+
+  function wireControls() {
+    document.getElementById("lr").addEventListener("input", () => {
+      document.getElementById("lrOut").value = alpha().toPrecision(3);
+      pause();
+      resetDescent();      // restart from (x0, y0) so runs with different alpha compare cleanly
+      drawDynamic();
+    });
+    document.querySelectorAll('input[name="func"]').forEach(el =>
+      el.addEventListener("change", switchFunction));
+    document.getElementById("play").addEventListener("click", togglePlay);
+    document.getElementById("step").addEventListener("click", () => { pause(); stepOnce(); drawDynamic(); });
+    document.getElementById("reset").addEventListener("click", () => { pause(); resetDescent(); drawDynamic(); });
+  }
+
+  function showError(err) {
+    console.error(err);
+    const el = document.createElement("div");
+    el.style.cssText = "background:#ffe2e2;border:1px solid #d33;color:#900;" +
+      "padding:10px 14px;margin:10px 0;border-radius:6px;font-weight:bold;";
+    el.textContent = "Applet error: " + ((err && err.message) || err);
+    document.body.prepend(el);
+  }
+
+  function init() {
+    try {
+      if (typeof d3 === "undefined")
+        throw new Error("d3 did not load — check the d3 <script> tag / your network.");
+      if (typeof d3.contours !== "function")
+        throw new Error("this d3 build is missing d3.contours.");
+      resetDescent();
+      build();
+      wireControls();
+      drawDynamic();
+      document.getElementById("lrOut").value = alpha().toPrecision(3);
+      const el = document.getElementById("ftex");
+      el.innerHTML = "\\(" + F.tex + "\\)";
+      if (window.MathJax && MathJax.startup && MathJax.startup.promise)
+        MathJax.startup.promise.then(() => MathJax.typesetPromise()).catch(() => {});
+    } catch (err) { showError(err); }
+  }
+  window.addEventListener("load", init);
+  </script>
+</head>
+
+<body>
+<div style="font:14px/1.4 system-ui,-apple-system,sans-serif;padding:8px 12px;"><a href="../index.html" style="color:#0072BD;text-decoration:none;">&larr; All STAT 413 applets</a></div>
+
+  <h1>Gradient Descent in 2D</h1>
+  <p style="max-width:840px">The downhill direction is the
+     <b>negative gradient</b> \( -\nabla L(\beta_1,\beta_2) = -\left( \frac{\partial L(\beta_1,\beta_2)}{\partial \beta_1},
+     \frac{\partial L(\beta_1,\beta_2)}{\partial \beta_2} \right) \), shown as the green arrow. The plot shows the
+     contour lines of \(L(\beta_1,\beta_2)\); darker rings are higher.
+     Drag anywhere on the plot to move the starting point
+     \(\boldsymbol{\beta}^{(0)}\). Try: on the elliptical bowl the \(\beta_2\)-direction is twice as curved, so
+     it zigzags across the valley and diverges once \(\alpha > \tfrac12\) &mdash; the steepest
+     direction sets the limit.</p>
+
+  <div class="gd-panel">
+    <h3>Contours of \(L\), the ball, and its path</h3>
+    <div class="plotwrap">
+      <div id="gd-main"></div>
+      <div class="xlab">\(\beta_1\)</div>
+      <div class="ylab centered" id="ylab-b2">\(\beta_2\)</div>
+    </div>
+    <div class="gd-legend">
+      <span class="sw" style="background:#3070B7"></span>contours of \(L\)
+      <span class="sw" style="background:#377e22"></span>\(-\nabla L\) direction
+      <span class="sw" style="background:#D55E00"></span>path so far; dashed = the next step
+      <span style="color:#377e22">&nbsp;&#9733;</span> local minima
+    </div>
+  </div>
+
+  <div class="gd-panel">
+    <h3>Is it getting anywhere? &mdash; \(L(\beta_1^{(t)}, \beta_2^{(t)})\) against iteration (dashed line = lowest value on the grid)</h3>
+    <div class="plotwrap">
+      <div id="gd-trace"></div>
+      <div class="xlab">iteration \(t\)</div>
+      <div class="ylab">\(L(\beta_1^{(t)}, \beta_2^{(t)})\)</div>
+    </div>
+  </div>
+
+  <div class="gd-readout">
+    \(t\) = <b id="ro-t"></b>
+    &nbsp;|&nbsp; \((\beta_1^{(t)}, \beta_2^{(t)})\) = (<b id="ro-x1"></b>, <b id="ro-x2"></b>)
+    &nbsp;|&nbsp; \(L(\beta^{(t)}_1, \beta^{(t)}_2)\) = <b id="ro-f"></b>
+    &nbsp;|&nbsp; \(\frac{\partial L(\beta^{(t)}_1, \beta^{(t)}_2)}{\partial \beta_1}\) = <b id="ro-g1"></b>
+    &nbsp;|&nbsp; \(\frac{\partial L(\beta^{(t)}_1, \beta^{(t)}_2)}{\partial \beta_2}\) = <b id="ro-g2"></b>
+    &nbsp;|&nbsp; step \(-\alpha\, \nabla L(\beta^{(t)}_1, \beta^{(t)}_2)\) = (<b id="ro-s1"></b>, <b id="ro-s2"></b>)<span id="ro-state"></span>
+  </div>
+
+  <div class="gd-controls">
+    <fieldset>
+      <legend>Function</legend>
+      <div class="gd-row"><label><input type="radio" name="func" value="bowl" checked> Elliptical bowl &nbsp;\((\beta_1-1)^2+2(\beta_2+\tfrac12)^2+2\)</label></div>
+      <div class="gd-row"><label><input type="radio" name="func" value="vee"> V-cone &nbsp;\(|\beta_1-1|+|\beta_2|+2\)</label></div>
+      <div class="gd-row"><label><input type="radio" name="func" value="well"> Double well &nbsp;\((\beta_1^2-1)^2+0.2\beta_1+\beta_2^2\)</label></div>
+      <div class="gd-row"><label><input type="radio" name="func" value="wavy"> Wavy bowl &nbsp;\(0.3(\beta_1^2+\beta_2^2)+\sin 3\beta_1+\sin 3\beta_2\)</label></div>
+      <div class="gd-row"><label><input type="radio" name="func" value="quartic"> Flat bottom &nbsp;\(\beta_1^4+\beta_2^4\)</label></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Step size (log scale)</legend>
+      <div class="gd-row">
+        <label>\(\alpha\)</label>
+        <input type="range" id="lr" min="-3" max="0.3" step="0.02" value="-1">
+        <output id="lrOut">0.100</output>
+      </div>
+      <div class="gd-row gd-hint">changing \(\alpha\) restarts from \(\boldsymbol{\beta}^{(0)}\)</div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Run</legend>
+      <div class="gd-row gd-buttons">
+        <button id="play">Play</button>
+        <button id="step">Step</button>
+        <button id="reset">Reset</button>
+      </div>
+      <div class="gd-row gd-hint">Reset returns to \(\boldsymbol{\beta}^{(0)}\)</div>
+    </fieldset>
+  </div>
+
+  <div class="gd-eq">
+    <div>current function: &nbsp;<span id="ftex"></span></div>
+    <div>update rule: &nbsp;\( \beta_1^{(t+1)} = \beta_1^{(t)} - \alpha\, \frac{\partial L(\beta_1^{(t)}, \beta_2^{(t)})}{\partial \beta_1},
+      \qquad \beta_2^{(t+1)} = \beta_2^{(t)} - \alpha\, \frac{\partial L(\beta_1^{(t)}, \beta_2^{(t)})}{\partial \beta_2} \)
+      <span style="color:#999">&nbsp;(each coordinate takes its own partial-derivative step;
+      at the V-cone's kinks we use the subgradient 0)</span></div>
+  </div>
+</body>
+</html>

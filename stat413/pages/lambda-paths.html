@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lambda Paths: Ridge vs Lasso</title>
+  <link rel="stylesheet" href="../styling/global.css">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; color: #222; }
+    h1 { font-size: 24px; }
+    .lp-intro { max-width: 980px; }
+    .lp-controls { margin: 12px 0; display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; }
+    .lp-controls fieldset { border: 1px solid #ccc; border-radius: 6px; padding: 10px 14px; }
+    .lp-controls legend { font-weight: bold; font-size: 13px; padding: 0 6px; }
+    .lp-row { margin: 6px 0; font-size: 14px; }
+    .lp-row input[type="range"] { vertical-align: middle; width: 280px; }
+    .lp-row output { font-variant-numeric: tabular-nums; min-width: 52px; display: inline-block; }
+    .lp-panels { display: flex; flex-wrap: wrap; gap: 22px; align-items: flex-start; }
+    .lp-panel h3 { font-size: 16px; margin: 0 0 4px 0; text-align: center; }
+    .lp-panel h3 .ridge { color: #1976d2; }
+    .lp-panel h3 .lasso { color: #e65100; }
+    .lp-cap { font-size: 13.5px; text-align: center; margin-top: 3px; font-variant-numeric: tabular-nums; }
+    .lp-legend { font-size: 13px; margin: 8px 0 4px 0; max-width: 980px; }
+    .lp-legend .pred { display: inline-block; margin-right: 12px; white-space: nowrap; }
+    .lp-legend .sw { display: inline-block; width: 14px; height: 3px; margin-right: 4px; vertical-align: middle; }
+    .ticktext { font-size: 10px; fill: #555; }
+    .lp-note { font-size: 13px; color: #555; max-width: 980px; margin: 6px 0 10px 0; }
+    select { font-size: 13px; }
+    .lp-svgwrap { position: relative; }
+    .axl { position: absolute; font-size: 13px; color: #333; pointer-events: none; }
+    .axl-x { transform: translateX(-50%); }
+    .axl-y { left: 2px; transform: translate(-50%, -50%) rotate(-90deg); }
+  </style>
+
+  <script src="https://d3js.org/d3.v7.js"></script>
+  <script>window.MathJax = {
+    tex: { inlineMath: [['\\(', '\\)'], ['$', '$']] },
+    svg: { fontCache: 'global' }
+  };</script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</head>
+
+<body>
+<div style="font:14px/1.4 system-ui,-apple-system,sans-serif;padding:8px 12px;"><a href="../index.html" style="color:#0072BD;text-decoration:none;">&larr; All STAT 413 applets</a></div>
+
+  <h1>Lambda Paths: Ridge vs Lasso</h1>
+  <p class="lp-intro">
+    All 10 standardized <b>mtcars</b> predictors, fit by coordinate descent at every \(\lambda\)
+    (computed live, warm-started along the grid). The top panels trace each coefficient
+    \(\hat\beta_j\) as \(\lambda\) grows: <b>ridge shrinks every coefficient smoothly and never to
+    exactly zero</b>; <b>lasso sets coefficients exactly to zero one at a time</b> until none are
+    left. The bottom panel follows two chosen coefficients through \(\beta\)-space: the ridge
+    trajectory bends smoothly toward the origin, while the lasso trajectory <b>hits an axis and
+    travels along it</b>. Drag the \(\lambda\) slider to move the markers.
+  </p>
+
+  <div class="lp-controls">
+    <fieldset>
+      <legend>Penalty</legend>
+      <div class="lp-row">
+        <label for="lp-lam">\(\lambda\)</label>
+        <input type="range" id="lp-lam" min="0" max="60" step="1" value="0">
+        <output id="lp-lam-out"></output>
+      </div>
+      <div class="lp-note" style="margin:4px 0 0 0">
+        \(\lambda = 0\) is OLS; the top of the slider is just past the \(\lambda\) that kills the
+        last lasso coefficient (ridge coefficients are still nonzero there)
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>\(\beta\)-space pair</legend>
+      <div class="lp-row">
+        <label>x:</label> <select id="lp-va"></select>
+        <label>y:</label> <select id="lp-vb"></select>
+      </div>
+    </fieldset>
+  </div>
+
+  <div class="lp-legend" id="lp-legend"></div>
+
+  <div class="lp-panels">
+    <div class="lp-panel" id="lp-ridge">
+      <h3><span class="ridge">Ridge</span> coefficient paths</h3>
+      <div class="lp-svgwrap">
+        <svg></svg>
+        <span class="axl axl-x" style="left:251px; top:298px">\(\lambda\)</span>
+        <span class="axl axl-y" style="top:146px">\(\hat\beta_j\)</span>
+      </div>
+      <div class="lp-cap"></div>
+    </div>
+    <div class="lp-panel" id="lp-lasso">
+      <h3><span class="lasso">Lasso</span> coefficient paths</h3>
+      <div class="lp-svgwrap">
+        <svg></svg>
+        <span class="axl axl-x" style="left:251px; top:298px">\(\lambda\)</span>
+        <span class="axl axl-y" style="top:146px">\(\hat\beta_j\)</span>
+      </div>
+      <div class="lp-cap"></div>
+    </div>
+    <div class="lp-panel" id="lp-beta">
+      <h3>Two coefficients through \(\beta\)-space</h3>
+      <div class="lp-svgwrap">
+        <svg></svg>
+        <span class="axl axl-x" id="lp-bx" style="left:206px; top:358px"></span>
+        <span class="axl axl-y" id="lp-by" style="top:176px"></span>
+      </div>
+      <div class="lp-cap"></div>
+    </div>
+  </div>
+
+<script>
+"use strict";
+
+// =====================================================================
+// ---- DATA (swap here) ----
+// Full numeric mtcars from the project's datasets/ folder. Everything
+// below (standardization, OLS, both paths, plot domains) derives from it.
+// =====================================================================
+const DATA = {"mpg": [21.0, 21.0, 22.8, 21.4, 18.7, 18.1, 14.3, 24.4, 22.8, 19.2, 17.8, 16.4, 17.3, 15.2, 10.4, 10.4, 14.7, 32.4, 30.4, 33.9, 21.5, 15.5, 15.2, 13.3, 19.2, 27.3, 26.0, 30.4, 15.8, 19.7, 15.0, 21.4], "cyl": [6.0, 6.0, 4.0, 6.0, 8.0, 6.0, 8.0, 4.0, 4.0, 6.0, 6.0, 8.0, 8.0, 8.0, 8.0, 8.0, 8.0, 4.0, 4.0, 4.0, 4.0, 8.0, 8.0, 8.0, 8.0, 4.0, 4.0, 4.0, 8.0, 6.0, 8.0, 4.0], "disp": [160.0, 160.0, 108.0, 258.0, 360.0, 225.0, 360.0, 146.7, 140.8, 167.6, 167.6, 275.8, 275.8, 275.8, 472.0, 460.0, 440.0, 78.7, 75.7, 71.1, 120.1, 318.0, 304.0, 350.0, 400.0, 79.0, 120.3, 95.1, 351.0, 145.0, 301.0, 121.0], "hp": [110.0, 110.0, 93.0, 110.0, 175.0, 105.0, 245.0, 62.0, 95.0, 123.0, 123.0, 180.0, 180.0, 180.0, 205.0, 215.0, 230.0, 66.0, 52.0, 65.0, 97.0, 150.0, 150.0, 245.0, 175.0, 66.0, 91.0, 113.0, 264.0, 175.0, 335.0, 109.0], "drat": [3.9, 3.9, 3.85, 3.08, 3.15, 2.76, 3.21, 3.69, 3.92, 3.92, 3.92, 3.07, 3.07, 3.07, 2.93, 3.0, 3.23, 4.08, 4.93, 4.22, 3.7, 2.76, 3.15, 3.73, 3.08, 4.08, 4.43, 3.77, 4.22, 3.62, 3.54, 4.11], "wt": [2.62, 2.875, 2.32, 3.215, 3.44, 3.46, 3.57, 3.19, 3.15, 3.44, 3.44, 4.07, 3.73, 3.78, 5.25, 5.424, 5.345, 2.2, 1.615, 1.835, 2.465, 3.52, 3.435, 3.84, 3.845, 1.935, 2.14, 1.513, 3.17, 2.77, 3.57, 2.78], "qsec": [16.46, 17.02, 18.61, 19.44, 17.02, 20.22, 15.84, 20.0, 22.9, 18.3, 18.9, 17.4, 17.6, 18.0, 17.98, 17.82, 17.42, 19.47, 18.52, 19.9, 20.01, 16.87, 17.3, 15.41, 17.05, 18.9, 16.7, 16.9, 14.5, 15.5, 14.6, 18.6], "vs": [0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], "am": [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], "gear": [4.0, 4.0, 4.0, 3.0, 3.0, 3.0, 3.0, 4.0, 4.0, 4.0, 4.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 4.0, 4.0, 4.0, 3.0, 3.0, 3.0, 3.0, 3.0, 4.0, 5.0, 5.0, 5.0, 5.0, 5.0, 4.0], "carb": [4.0, 4.0, 1.0, 1.0, 2.0, 1.0, 4.0, 2.0, 2.0, 4.0, 4.0, 3.0, 3.0, 3.0, 4.0, 4.0, 4.0, 1.0, 2.0, 1.0, 1.0, 2.0, 2.0, 4.0, 2.0, 1.0, 2.0, 2.0, 4.0, 6.0, 8.0, 2.0]};
+const YCOL = "mpg";
+
+const MCOL = { ridge: "#1976d2", lasso: "#e65100" };   // method colors (match loss-surfaces applet)
+const K = 61;                                          // lambda grid size
+
+// panel pixel geometry
+const PW = 470, PH = 320, BW = 380, BH = 380;
+const MAR = { l: 46, r: 14, t: 10, b: 38 };
+
+// =====================================================================
+// Preparation (scalar loops; no matrices)
+// =====================================================================
+function standardize(a) {
+  const n = a.length;
+  let m = 0; for (const v of a) m += v; m /= n;
+  let s2 = 0; for (const v of a) s2 += (v - m) * (v - m); s2 /= (n - 1);
+  const s = Math.sqrt(s2);
+  return a.map(v => (v - m) / s);
+}
+
+const PREDS = Object.keys(DATA).filter(c => c !== YCOL);
+const p = PREDS.length;
+const X = PREDS.map(c => standardize(DATA[c]));        // X[j][i]
+const y = standardize(DATA[YCOL]);
+const n = y.length;
+const cj = X.map(xj => xj.reduce((s, v) => s + v * v, 0));
+
+// coordinate descent for RSS + penalty; method: "ridge" | "lasso"
+function cdFit(lam, method, beta, r) {                 // beta (p), r (n) updated in place
+  for (let sweep = 0; sweep < 500; sweep++) {
+    let delta = 0;
+    for (let j = 0; j < p; j++) {
+      const xj = X[j];
+      let rho = 0;
+      for (let i = 0; i < n; i++) rho += xj[i] * r[i];
+      rho += beta[j] * cj[j];
+      let bj;
+      if (method === "ridge") bj = rho / (cj[j] + lam);
+      else {
+        const a = Math.abs(rho) - lam / 2;
+        bj = a > 0 ? Math.sign(rho) * a / cj[j] : 0;
+      }
+      const step = bj - beta[j];
+      if (step !== 0) {
+        for (let i = 0; i < n; i++) r[i] -= step * xj[i];
+        beta[j] = bj;
+        const as = Math.abs(step);
+        if (as > delta) delta = as;
+      }
+    }
+    if (delta < 1e-10) break;
+  }
+}
+
+// lasso-death lambda: beta = 0 is the solution when lam/2 >= max_j |x_j^T y|
+let rhoMax = 0;
+for (let j = 0; j < p; j++) {
+  let d = 0; for (let i = 0; i < n; i++) d += X[j][i] * y[i];
+  rhoMax = Math.max(rhoMax, Math.abs(d));
+}
+const LAM_TOP = 1.05 * 2 * rhoMax;
+const S = d3.range(K).map(k => k / (K - 1));
+const LAMS = S.map(s => LAM_TOP * s * s);
+
+// full paths, warm-started (k=0 is OLS for both)
+function fitPath(method) {
+  const path = [];
+  const beta = new Array(p).fill(0);
+  const r = y.slice();
+  for (const lam of LAMS) {
+    cdFit(lam, method, beta, r);
+    path.push(beta.slice());
+  }
+  return path;                                          // path[k][j]
+}
+const PATH = { ridge: fitPath("ridge"), lasso: fitPath("lasso") };
+const OLS = PATH.ridge[0];
+
+// default beta-space pair: the two largest |OLS| coefficients
+const order = d3.range(p).sort((a, b) => Math.abs(OLS[b]) - Math.abs(OLS[a]));
+const state = { k: 0, a: order[0], b: order[1] };
+
+// =====================================================================
+// Rendering
+// =====================================================================
+const predColor = d3.scaleOrdinal(d3.schemeTableau10).domain(d3.range(p));
+const xs = d3.scaleLinear().domain([0, 1]);            // s-position of lambda
+const fmt = v => (Math.abs(v) < 5e-13 ? "0" : v.toFixed(2));
+
+let yExt = 0;
+for (const m of ["ridge", "lasso"]) for (const row of PATH[m]) for (const v of row) yExt = Math.max(yExt, Math.abs(v));
+yExt *= 1.08;
+
+const panels = {};
+for (const id of ["ridge", "lasso", "beta"]) {
+  const root = document.getElementById("lp-" + id);
+  const w = id === "beta" ? BW : PW, h = id === "beta" ? BH : PH;
+  const svg = d3.select(root.querySelector("svg")).attr("width", w).attr("height", h);
+  const g = svg.append("g").attr("transform", `translate(${MAR.l},${MAR.t})`);
+  panels[id] = {
+    id, root, g,
+    cw: w - MAR.l - MAR.r, ch: h - MAR.t - MAR.b,
+    gAxes: g.append("g"), gCurves: g.append("g"), gMark: g.append("g"),
+    cap: root.querySelector(".lp-cap"),
+  };
+}
+
+function renderPathPanel(method) {
+  const P = panels[method], path = PATH[method];
+  const x = xs.copy().range([0, P.cw]);
+  const ys = d3.scaleLinear().domain([-yExt, yExt]).range([P.ch, 0]);
+
+  P.gAxes.selectAll("*").remove();
+  P.gAxes.append("g").attr("transform", `translate(0,${P.ch})`)
+    .call(d3.axisBottom(x).tickValues([0, 0.25, 0.5, 0.75, 1])
+      .tickFormat(s => (LAM_TOP * s * s).toFixed(0)).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  P.gAxes.append("g").call(d3.axisLeft(ys).ticks(6).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  P.gAxes.append("line")                                 // beta = 0
+    .attr("x1", 0).attr("x2", P.cw).attr("y1", ys(0)).attr("y2", ys(0))
+    .attr("stroke", "#bbb").attr("stroke-dasharray", "4,3");
+
+  P.gCurves.selectAll("*").remove();
+  for (let j = 0; j < p; j++) {
+    P.gCurves.append("path")
+      .attr("d", d3.line().x((v, k) => x(S[k])).y(v => ys(v))(path.map(row => row[j])))
+      .attr("fill", "none").attr("stroke", predColor(j))
+      .attr("stroke-width", j === state.a || j === state.b ? 2.6 : 1.4)
+      .attr("opacity", j === state.a || j === state.b ? 1 : 0.75);
+  }
+  P.ys = ys; P.x = x;
+}
+
+function renderBetaPanel() {
+  const P = panels.beta, a = state.a, b = state.b;
+  let ext = Math.max(Math.abs(OLS[a]), Math.abs(OLS[b]), 0.1) * 1.15;
+  const x = d3.scaleLinear().domain([-ext, ext]).range([0, P.cw]);
+  const ys = d3.scaleLinear().domain([-ext, ext]).range([P.ch, 0]);
+
+  P.gAxes.selectAll("*").remove();
+  P.gAxes.append("g").attr("transform", `translate(0,${P.ch})`)
+    .call(d3.axisBottom(x).ticks(5).tickSize(3)).selectAll("text").attr("class", "ticktext");
+  P.gAxes.append("g").call(d3.axisLeft(ys).ticks(5).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  P.gAxes.append("line").attr("x1", x(0)).attr("x2", x(0)).attr("y1", 0).attr("y2", P.ch)
+    .attr("stroke", "#bbb").attr("stroke-dasharray", "4,3");
+  P.gAxes.append("line").attr("x1", 0).attr("x2", P.cw).attr("y1", ys(0)).attr("y2", ys(0))
+    .attr("stroke", "#bbb").attr("stroke-dasharray", "4,3");
+
+  P.gCurves.selectAll("*").remove();
+  for (const m of ["ridge", "lasso"]) {
+    P.gCurves.append("path")
+      .attr("d", d3.line().x(row => x(row[a])).y(row => ys(row[b]))(PATH[m]))
+      .attr("fill", "none").attr("stroke", MCOL[m]).attr("stroke-width", 2.2);
+  }
+  // OLS start (shared by both trajectories)
+  const r = 4;
+  const cross = `M${x(OLS[a]) - r},${ys(OLS[b]) - r}L${x(OLS[a]) + r},${ys(OLS[b]) + r}` +
+                `M${x(OLS[a]) - r},${ys(OLS[b]) + r}L${x(OLS[a]) + r},${ys(OLS[b]) - r}`;
+  P.gCurves.append("path").attr("d", cross).attr("stroke", "#fff").attr("stroke-width", 3);
+  P.gCurves.append("path").attr("d", cross).attr("stroke", "#444").attr("stroke-width", 1.5);
+  P.x = x; P.ys = ys;
+
+  // axis labels: beta-hat of the picked predictors (retypeset only on pair change)
+  const bx = document.getElementById("lp-bx"), by = document.getElementById("lp-by");
+  const key = a + "," + b;
+  if (bx.dataset.pair !== key) {
+    bx.dataset.pair = key;
+    bx.innerHTML = `\\(\\hat\\beta_{\\mathrm{${PREDS[a]}}}\\)`;
+    by.innerHTML = `\\(\\hat\\beta_{\\mathrm{${PREDS[b]}}}\\)`;
+    if (window.MathJax && MathJax.typesetPromise) MathJax.typesetPromise([bx, by]);
+  }
+}
+
+function renderMarkers() {
+  const k = state.k;
+  for (const m of ["ridge", "lasso"]) {
+    const P = panels[m];
+    P.gMark.selectAll("*").remove();
+    P.gMark.append("line")
+      .attr("x1", P.x(S[k])).attr("x2", P.x(S[k])).attr("y1", 0).attr("y2", P.ch)
+      .attr("stroke", "#aaa");
+    for (const j of [state.a, state.b]) {
+      P.gMark.append("circle")
+        .attr("cx", P.x(S[k])).attr("cy", P.ys(PATH[m][k][j])).attr("r", 4)
+        .attr("fill", predColor(j)).attr("stroke", "#fff").attr("stroke-width", 1.2);
+    }
+    const zeros = PATH[m][k].filter(v => v === 0).length;
+    P.cap.textContent = m === "lasso"
+      ? `${zeros} of ${p} coefficients exactly 0`
+      : `coefficients exactly 0: ${zeros} of ${p} (never, for λ > 0)`;
+  }
+  const P = panels.beta;
+  P.gMark.selectAll("*").remove();
+  const parts = [];
+  for (const m of ["ridge", "lasso"]) {
+    const row = PATH[m][state.k];
+    P.gMark.append("circle")
+      .attr("cx", P.x(row[state.a])).attr("cy", P.ys(row[state.b])).attr("r", 5)
+      .attr("fill", MCOL[m]).attr("stroke", "#fff").attr("stroke-width", 1.5);
+    parts.push(`<span style="color:${MCOL[m]}">${m}: (${fmt(row[state.a])}, ${fmt(row[state.b])})</span>`);
+  }
+  P.cap.innerHTML = `${PREDS[state.a]} vs ${PREDS[state.b]} &mdash; ` + parts.join(" &nbsp; ");
+}
+
+function renderLegend() {
+  const el = document.getElementById("lp-legend");
+  el.innerHTML = PREDS.map((c, j) =>
+    `<span class="pred"><span class="sw" style="background:${predColor(j)}"></span>${c}</span>`).join("") +
+    `<span class="pred" style="color:#888">&mdash; thicker curves = the β-space pair</span>`;
+}
+
+function renderAll() {
+  renderPathPanel("ridge");
+  renderPathPanel("lasso");
+  renderBetaPanel();
+  renderMarkers();
+  document.getElementById("lp-lam-out").value = LAMS[state.k].toFixed(1);
+}
+
+function main() {
+  if (main.done) return;                   // jsdom fires load twice
+  main.done = true;
+
+  const slider = document.getElementById("lp-lam");
+  slider.max = K - 1;
+  slider.addEventListener("input", () => { state.k = +slider.value; renderMarkers();
+    document.getElementById("lp-lam-out").value = LAMS[state.k].toFixed(1); });
+
+  const selA = document.getElementById("lp-va"), selB = document.getElementById("lp-vb");
+  for (const [sel, cur] of [[selA, state.a], [selB, state.b]]) {
+    PREDS.forEach((c, j) => {
+      const o = document.createElement("option");
+      o.value = j; o.textContent = c;
+      sel.appendChild(o);
+    });
+    sel.value = cur;
+  }
+  const onPair = () => {
+    let a = +selA.value, b = +selB.value;
+    if (a === b) {                          // keep the pair distinct
+      b = (a + 1) % p;
+      selB.value = b;
+    }
+    state.a = a; state.b = b;
+    renderAll();
+  };
+  selA.addEventListener("change", onPair);
+  selB.addEventListener("change", onPair);
+
+  renderLegend();
+  renderAll();
+
+  window.__lpApi = {
+    setK: k => { state.k = k; slider.value = k; renderMarkers(); },
+    setPair: (a, b) => { selA.value = a; selB.value = b; onPair(); },   // same dedupe as the UI
+    PATH, OLS, LAMS, S, PREDS, state,
+  };
+}
+window.addEventListener("load", main);
+</script>
+
+<!--
+  SOURCES (kept in source; not displayed in the applet UI)
+  - Data: full numeric mtcars from the project's datasets/ folder, embedded
+    verbatim above; all columns standardized (mean 0, sd 1, ddof=1).
+  - Both paths computed IN THE BROWSER by coordinate descent on
+    RSS + lam*||b||^2 (ridge update: rho_j / (c_j + lam)) and
+    RSS + lam*||b||_1 (lasso update: soft(rho_j, lam/2) / c_j),
+    warm-started along the grid lam_k = LAM_TOP * (k/(K-1))^2; lam=0 is OLS.
+  - LAM_TOP is 1.05x the lasso-death lambda 2*max_j |x_j^T y|, so the lasso
+    path visibly ends at exactly beta = 0 while ridge is still nonzero.
+  - Coefficient-path figures: James, Witten, Hastie, Tibshirani, ISLR
+    figs. 6.4 (ridge) and 6.6 (lasso).
+-->
+</body>
+</html>

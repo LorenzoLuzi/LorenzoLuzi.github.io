@@ -21,27 +21,29 @@ main:
   # - title: "Guide"
   #   url: /markdown/
 
-  - title: "SLR"
-    url: /slr2/
+  # - title: "SLR"
+  #   url: /slr2/
     
-  - title: "PolyReg"
-    url: /poly-reg/
+  # - title: "PolyReg"
+  #   url: /poly-reg/
     
-  - title: "MLR"
-    url: /mlr/
+  # - title: "MLR"
+  #   url: /mlr/
     
-  - title: "LogReg 1D"
-    url: /log-reg-1d/
+  # - title: "LogReg 1D"
+  #   url: /log-reg-1d/
     
-  - title: "LogReg 3D"
-    url: /log-reg-3d/
+  # - title: "LogReg 3D"
+  #   url: /log-reg-3d/
     
-  - title: "KNN 1D"
-    url: /knn1d/
+  # - title: "KNN 1D"
+  #   url: /knn1d/
     
-  - title: "KNN 2D"
-    url: /knn2d/
+  # - title: "KNN 2D"
+  #   url: /knn2d/
     
+  - title: "STAT 413 Applets"
+    url: /stat413/
   
     
   
