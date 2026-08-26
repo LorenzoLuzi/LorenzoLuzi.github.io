@@ -24,6 +24,9 @@
     .rp-eq { background: #f6f6f8; border: 1px solid #e0e0e6; border-radius: 6px;
              padding: 12px 16px; margin-top: 12px; font-size: 15px; line-height: 2.2; max-width: 900px; }
     .rp-hint { font-size: 13px; color: #777; font-style: italic; }
+    /* progressive disclosure: everything lasso-related carries .lasso-only and
+       is hidden until the "show lasso" checkbox adds/removes .lasso-off on body */
+    .lasso-off .lasso-only { display: none; }
     .plotwrap { position: relative; display: inline-block; }
     .plotwrap .xlab { position: absolute; left: 50%; bottom: 2px; transform: translateX(-50%); font-size: 14px; }
     .plotwrap .ylab { position: absolute; left: 8px; top: -6px; font-size: 14px; }
@@ -242,11 +245,21 @@ Volvo 142E,21.4,4,121,109,4.11,2.78,18.6,1,1,4,2`;
     bXS = d3.scaleBand(COLS, [0, Wb]).paddingInner(0.25).paddingOuter(0.1);
     bYS = coefS.copy().range([Hb, 0]);
     svg.append("g").call(d3.axisLeft(bYS).ticks(6));
+    // the axis at beta = 0 keeps its domain path (the zero line the bars grow
+    // from) but loses its labels: negative bars used to cover them up
     axBX = svg.append("g").attr("transform", `translate(0,${bYS(0)})`)
       .call(d3.axisBottom(bXS).tickSize(0));
-    axBX.selectAll("text")
-      .attr("fill", (d, i) => VCOLOR[i]).attr("font-weight", "bold")
-      .attr("y", 8).attr("dy", "0.71em");
+    axBX.selectAll("text").remove();
+    // variable names live at the TOP of the panel instead, anchored at beta = 2
+    // (clamped into the panel if the y-domain ever stops reaching 2). No bar can
+    // reach them: the largest positive coefficient on this data is ~1.63.
+    const yName = Math.max(bYS(2), 0);
+    svg.append("g").selectAll("text.vname").data(COLS).join("text").attr("class", "vname")
+      .attr("x", c => bXS(c) + bXS.bandwidth() / 2)
+      .attr("y", yName).attr("dy", "0.71em")
+      .attr("text-anchor", "middle").attr("font-size", 10).attr("font-weight", "bold")
+      .attr("fill", (d, i) => VCOLOR[i])
+      .text(c => c);
     gBars = svg.append("g");
   }
 
@@ -254,8 +267,10 @@ Volvo 142E,21.4,4,121,109,4.11,2.78,18.6,1,1,4,2`;
     const B = betasAt(CUR);
     ["ols", "ridge", "lasso"].forEach(m => panels[m].attr("x1", lamS(CUR)).attr("x2", lamS(CUR)));
 
-    const methods = ["ols", "ridge", "lasso"];
-    const bw = bXS.bandwidth() / 3;
+    // grouped bars: 2 per variable (OLS, ridge) until lasso is switched on
+    const lassoOn = document.getElementById("lassoChk").checked;
+    const methods = lassoOn ? ["ols", "ridge", "lasso"] : ["ols", "ridge"];
+    const bw = bXS.bandwidth() / methods.length;
     const data = [];
     COLS.forEach((c, j) => methods.forEach((m, k) =>
       data.push({ key: c + "-" + m, x: bXS(c) + k * bw, v: B[m][j], m: m })));
@@ -277,6 +292,11 @@ Volvo 142E,21.4,4,121,109,4.11,2.78,18.6,1,1,4,2`;
     inp.addEventListener("input", () => {
       CUR = Math.pow(10, +inp.value);
       document.getElementById("lamOut").value = CUR.toPrecision(3);
+      drawCurrent();
+    });
+    const chk = document.getElementById("lassoChk");
+    chk.addEventListener("change", () => {
+      document.body.classList.toggle("lasso-off", !chk.checked);
       drawCurrent();
     });
   }
@@ -305,6 +325,9 @@ Volvo 142E,21.4,4,121,109,4.11,2.78,18.6,1,1,4,2`;
       buildPathPanel("#rp-lasso", "lasso");
       buildBars();
       wireControls();
+      // sync with the checkbox: browsers (e.g. Firefox) can restore a checked
+      // state across reloads, so don't assume the HTML default
+      document.body.classList.toggle("lasso-off", !document.getElementById("lassoChk").checked);
       document.getElementById("lamOut").value = CUR.toPrecision(3);
       drawCurrent();
       // variable legend (colors match the path lines and bar-group labels)
@@ -318,17 +341,12 @@ Volvo 142E,21.4,4,121,109,4.11,2.78,18.6,1,1,4,2`;
   </script>
 </head>
 
-<body>
-<div style="font:14px/1.4 system-ui,-apple-system,sans-serif;padding:8px 12px;"><a href="../index.html" style="color:#0072BD;text-decoration:none;">&larr; All STAT 413 applets</a></div>
-
-  <h1>Regularization Paths: OLS, Ridge &amp; Lasso</h1>
-  <p style="max-width:900px">The same car data as the &ldquo;Be the Optimizer&rdquo; applet
-     (32 cars, \(\text{mpg}\) regressed on 10 standardized predictors), but now the computer
-     does the fitting &mdash; once for every \(\lambda\) on a log grid, live in this page.
-     Each colored line is one coefficient \(\hat{\beta}_j(\lambda)\).
-     <span class="rp-hint">Drag the \(\lambda\) slider and watch: ridge only <b>shrinks</b>
-     coefficients smoothly, while lasso sets them <b>exactly to zero</b>, one by one.
-     OLS has no penalty, so \(\lambda\) does nothing to it.</span></p>
+<body class="lasso-off">
+  <h1>Regularization Paths: OLS, Ridge<span class="lasso-only"> &amp; Lasso</span></h1>
+  <p style="max-width:900px">Below is a real dataset: 32 cars road-tested by Motor Trend in 1974.
+     Each colored line is one coefficient \(\hat{\beta}_j(\lambda)\). Drag the \(\lambda\) slider and watch: ridge only <b>shrinks</b>
+     coefficients smoothly<span class="lasso-only">, while lasso sets them <b>exactly to zero</b>, one by one</span>.
+     OLS has no penalty, so \(\lambda\) does nothing to it.</p>
 
   <div class="rp-panels">
     <div class="rp-panel">
@@ -347,7 +365,7 @@ Volvo 142E,21.4,4,121,109,4.11,2.78,18.6,1,1,4,2`;
         <div class="ylab">\(\hat{\beta}_j\)</div>
       </div>
     </div>
-    <div class="rp-panel">
+    <div class="rp-panel lasso-only">
       <h3>Lasso &mdash; sparsity: exact zeros</h3>
       <div class="plotwrap">
         <div id="rp-lasso"></div>
@@ -367,11 +385,15 @@ Volvo 142E,21.4,4,121,109,4.11,2.78,18.6,1,1,4,2`;
         <output id="lamOut"></output>
       </div>
     </fieldset>
+    <fieldset>
+      <legend>Lasso</legend>
+      <div class="rp-row"><label><input type="checkbox" id="lassoChk"> show lasso</label></div>
+    </fieldset>
     <div class="rp-counts">
       nonzero coefficients at this \(\lambda\): &nbsp;
       OLS <b id="nz-ols">10</b> / 10 &nbsp;&middot;&nbsp;
-      Ridge <b id="nz-ridge">10</b> / 10 &nbsp;&middot;&nbsp;
-      <span class="lasso">Lasso <b id="nz-lasso">10</b> / 10</span>
+      Ridge <b id="nz-ridge">10</b> / 10<span class="lasso lasso-only"> &nbsp;&middot;&nbsp;
+      Lasso <b id="nz-lasso">10</b> / 10</span>
     </div>
   </div>
 
@@ -379,7 +401,7 @@ Volvo 142E,21.4,4,121,109,4.11,2.78,18.6,1,1,4,2`;
     <h3 style="text-align:left">Coefficients at the current \(\lambda\)
       &nbsp;<span style="color:#888">&#9632; OLS</span>
       &nbsp;<span style="color:#3070B7">&#9632; Ridge</span>
-      &nbsp;<span style="color:#D55E00">&#9632; Lasso</span></h3>
+      <span class="lasso-only">&nbsp;<span style="color:#D55E00">&#9632; Lasso</span></span></h3>
     <div class="plotwrap">
       <div id="rp-bars"></div>
       <div class="ylab">\(\hat{\beta}_j\)</div>
@@ -392,7 +414,7 @@ Volvo 142E,21.4,4,121,109,4.11,2.78,18.6,1,1,4,2`;
     <div>\( \text{Ridge:} \quad \hat{\beta}(\lambda) = \arg\min_{\beta}\;
       \text{MSE}(\beta) + \lambda \sum_{j=1}^{10} \beta_j^2 \)
       <span class="rp-hint">&mdash; closed form; smooth shrinkage</span></div>
-    <div>\( \text{Lasso:} \quad \hat{\beta}(\lambda) = \arg\min_{\beta}\;
+    <div class="lasso-only">\( \text{Lasso:} \quad \hat{\beta}(\lambda) = \arg\min_{\beta}\;
       \text{MSE}(\beta) + \lambda \sum_{j=1}^{10} |\beta_j| \)
       <span class="rp-hint">&mdash; coordinate descent (soft-thresholding); exact zeros,
       all 10 gone by \(\lambda \approx 10.3\)</span></div>
