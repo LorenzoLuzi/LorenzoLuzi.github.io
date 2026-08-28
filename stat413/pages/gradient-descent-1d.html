@@ -38,13 +38,13 @@
   <script>
   // ===========================================================================
   // Gradient descent in ONE dimension, on plain loss functions L(x) (no data, no
-  // models):    \beta^{(t+1)} = \beta^{(t)} - alpha * dL(\beta^{(t)})/d\beta
+  // models):    \beta^{(t+1)} = \beta^{(t)} - rho * dL(\beta^{(t)})/d\beta
   //
   // The point of the applet: the SAME update rule behaves completely
-  // differently depending on (1) the step size alpha and (2) where you start.
-  //   - smooth bowl : converges if alpha < 1, oscillates/diverges if alpha > 1
+  // differently depending on (1) the step size rho and (2) where you start.
+  //   - smooth bowl : converges if rho < 1, oscillates/diverges if rho > 1
   //   - |x - a|     : slope is always +/-1, so a fixed step NEVER settles; it
-  //                   bounces around the kink with amplitude = alpha
+  //                   bounces around the kink with amplitude = rho
   //   - double well / wavy bowl : which minimum you land in depends on x0
   //   - x^4         : flat bottom -> gradient vanishes, progress crawls
   // ===========================================================================
@@ -104,7 +104,7 @@
 
   const NSAMP = 801;
   const MAXIT = 1000;             // give up after this many iterations
-  function alpha() { return Math.pow(10, +document.getElementById("lr").value); }
+  function rho() { return Math.pow(10, +document.getElementById("lr").value); }
   function fmt(v) {
     if (!isFinite(v)) return "&infin;";
     return Math.abs(v) >= 1e4 ? v.toExponential(2) : v.toFixed(4);
@@ -131,7 +131,7 @@
 
   function stepOnce() {
     if (S.state !== "running") return;
-    const a = alpha(), g = F.df(S.x);
+    const a = rho(), g = F.df(S.x);
     const xn = S.x - a * g;
     S.x = xn; S.iter += 1;
     S.path.push({ x: xn, fx: F.f(xn) });
@@ -204,7 +204,7 @@
 
   // -------------------------------------------------------------- dynamic draw
   function drawDynamic() {
-    const a = alpha();
+    const a = rho();
 
     // descent path on the curve: connecting line + last 100 dots (fading)
     gDyn.selectAll("path.trail").data([S.path]).join("path").attr("class", "trail")
@@ -222,7 +222,7 @@
       .attr("x2", xS(S.x + hx)).attr("y2", yS(fx + g * hx))
       .attr("stroke", C.tangent).attr("stroke-width", 2);
 
-    // dashed preview of the NEXT iterate x - alpha dL/dx
+    // dashed preview of the NEXT iterate x - rho dL/dx
     const xn = S.x - a * g;
     gDyn.selectAll("line.next").data([0]).join("line").attr("class", "next")
       .attr("x1", xS(S.x)).attr("y1", yS(fx))
@@ -306,9 +306,9 @@
 
   function wireControls() {
     document.getElementById("lr").addEventListener("input", e => {
-      document.getElementById("lrOut").value = alpha().toPrecision(3);
+      document.getElementById("lrOut").value = rho().toPrecision(3);
       pause();
-      resetDescent();      // restart from x0 so runs with different alpha compare cleanly
+      resetDescent();      // restart from x0 so runs with different rho compare cleanly
       drawDynamic();
     });
     document.querySelectorAll('input[name="func"]').forEach(el =>
@@ -337,7 +337,7 @@
       wireControls();
       drawDynamic();
       renderNote();
-      document.getElementById("lrOut").value = alpha().toPrecision(3);
+      document.getElementById("lrOut").value = rho().toPrecision(3);
       const el = document.getElementById("ftex");
       el.innerHTML = "\\(" + F.tex + "\\)";
       if (window.MathJax && MathJax.startup && MathJax.startup.promise)
@@ -352,8 +352,8 @@
 <div style="font:14px/1.4 system-ui,-apple-system,sans-serif;padding:8px 12px;"><a href="../index.html" style="color:#0072BD;text-decoration:none;">&larr; All STAT 413 applets</a></div>
 
   <h1>Gradient Descent in 1D</h1>
-  <p style="max-width:820px">\(L(\beta)\) represents a loss function for parameter \(\beta\). The ball represents our current estimate, \(\beta^{(t)}\) and it repeatedly takes the step \(\beta^{(t+1)} = \beta^{(t)} - \alpha\, \frac{dL(\beta^{(t)})}{d\beta}\). Drag anywhere on the plot to move
-     the starting point \(\beta^{(0)}\). Try: crank \(\alpha\) past 1 on the smooth bowl; watch the
+  <p style="max-width:820px">\(L(\beta)\) represents a loss function for parameter \(\beta\). The ball represents our current estimate, \(\beta^{(t)}\) and it repeatedly takes the step \(\beta^{(t+1)} = \beta^{(t)} - \rho\, \frac{dL(\beta^{(t)})}{d\beta}\). Drag anywhere on the plot to move
+     the starting point \(\beta^{(0)}\). Try: crank \(\rho\) past 1 on the smooth bowl; watch the
      V-shape bounce forever; drag \(\beta^{(0)}\) across the hump of the double well.</p>
 
   <div class="gd-panel">
@@ -385,7 +385,7 @@
     &nbsp;|&nbsp; \(\beta^{(t)}\) = <b id="ro-x"></b>
     &nbsp;|&nbsp; \(L(\beta^{(t)})\) = <b id="ro-f"></b>
     &nbsp;|&nbsp; \(\frac{dL(\beta^{(t)})}{d\beta}\) = <b id="ro-g"></b>
-    &nbsp;|&nbsp; step \(-\alpha\, \frac{dL(\beta^{(t)})}{d\beta}\) = <b id="ro-s"></b><span id="ro-state"></span>
+    &nbsp;|&nbsp; step \(-\rho\, \frac{dL(\beta^{(t)})}{d\beta}\) = <b id="ro-s"></b><span id="ro-state"></span>
   </div>
 
   <div class="gd-controls">
@@ -401,16 +401,16 @@
     <fieldset>
       <legend>Step size (log scale)</legend>
       <div class="gd-row">
-        <label>\(\alpha\)</label>
-        <!-- Slider position is log10(alpha). The step is log10(0.08)/-55 so that
-             the grid lands EXACTLY on both alpha = 0.08 (the default, k=95) and
-             alpha = 1 (k=150, the smooth bowl's divergence threshold). Range is
-             effectively unchanged from the old min=-3/max=0.3: alpha 0.001 to 1.99. -->
+        <label>\(\rho\)</label>
+        <!-- Slider position is log10(rho). The step is log10(0.08)/-55 so that
+             the grid lands EXACTLY on both rho = 0.08 (the default, k=95) and
+             rho = 1 (k=150, the smooth bowl's divergence threshold). Range is
+             effectively unchanged from the old min=-3/max=0.3: rho 0.001 to 1.99. -->
         <input type="range" id="lr" min="-2.9915727627492448" max="0.2991572762749244"
                step="0.0199438184183283" value="-1.0969100130080565">
         <output id="lrOut">0.0800</output>
       </div>
-      <div class="gd-row gd-hint">changing \(\alpha\) restarts from \(\beta^{(0)}\)</div>
+      <div class="gd-row gd-hint">changing \(\rho\) restarts from \(\beta^{(0)}\)</div>
     </fieldset>
 
     <fieldset>
@@ -426,7 +426,7 @@
 
   <div class="gd-eq">
     <div>current function: &nbsp;<span id="ftex"></span></div>
-    <div>update rule: &nbsp;\( \beta^{(t+1)} \;=\; \beta^{(t)} \;-\; \alpha\, \frac{dL(\beta^{(t)})}{d\beta} \)
+    <div>update rule: &nbsp;\( \beta^{(t+1)} \;=\; \beta^{(t)} \;-\; \rho\, \frac{dL(\beta^{(t)})}{d\beta} \)
       <span id="fnote" style="color:#999"></span></div>
   </div>
 </body>

@@ -42,13 +42,13 @@
   <script>
   // ===========================================================================
   // Gradient descent in TWO dimensions, on plain loss functions L(x, y):
-  //   x^{(t+1)} = x^{(t)} - alpha * dL/dx(x^{(t)}, y^{(t)})
-  //   y^{(t+1)} = y^{(t)} - alpha * dL/dy(x^{(t)}, y^{(t)})
+  //   x^{(t+1)} = x^{(t)} - rho * dL/dx(x^{(t)}, y^{(t)})
+  //   y^{(t+1)} = y^{(t)} - rho * dL/dy(x^{(t)}, y^{(t)})
   // Same lessons as the 1D applet, plus one that only exists in 2D:
   //   - elliptical bowl : curvature differs by direction, so the STEEPEST
-  //     direction sets the alpha limit -> zigzag across the valley, then
-  //     divergence in y first (here: diverges once alpha > 1/2, not 1)
-  //   - V-cone          : |.| kinks -> bounces forever, amplitude ~ alpha
+  //     direction sets the rho limit -> zigzag across the valley, then
+  //     divergence in y first (here: diverges once rho > 1/2, not 1)
+  //   - V-cone          : |.| kinks -> bounces forever, amplitude ~ rho
   //   - double well / wavy bowl : initialization picks the basin
   //   - x^4 + y^4       : flat bottom -> gradient vanishes, progress crawls
   // ===========================================================================
@@ -113,7 +113,7 @@
   let xS, yS, tXS, tYS;
   let gStars, gDyn, gTraceAxisX, gTrace;
 
-  function alpha() { return Math.pow(10, +document.getElementById("lr").value); }
+  function rho() { return Math.pow(10, +document.getElementById("lr").value); }
   function fmt(v) {
     if (!isFinite(v)) return "&infin;";
     return Math.abs(v) >= 1e4 ? v.toExponential(2) : v.toFixed(4);
@@ -168,7 +168,7 @@
 
   function stepOnce() {
     if (S.state !== "running") return;
-    const a = alpha();
+    const a = rho();
     const gx = F.fx(S.x, S.y), gy = F.fy(S.x, S.y);
     S.x -= a * gx; S.y -= a * gy; S.iter += 1;
     S.path.push({ x: S.x, y: S.y, fv: F.f(S.x, S.y) });
@@ -176,7 +176,7 @@
     const cx = (F.xdom[0] + F.xdom[1]) / 2, cy = (F.ydom[0] + F.ydom[1]) / 2;
     if (!isFinite(S.x) || !isFinite(S.y) || Math.hypot(S.x - cx, S.y - cy) > 50 * span)
       S.state = "diverged";
-    else if (alpha() * Math.hypot(F.fx(S.x, S.y), F.fy(S.x, S.y)) < 1e-7)
+    else if (rho() * Math.hypot(F.fx(S.x, S.y), F.fy(S.x, S.y)) < 1e-7)
       S.state = "converged";
     else if (S.iter >= MAXIT)
       S.state = "maxiter";
@@ -273,7 +273,7 @@
 
   // -------------------------------------------------------------- dynamic draw
   function drawDynamic() {
-    const a = alpha();
+    const a = rho();
     const gx = F.fx(S.x, S.y), gy = F.fy(S.x, S.y);
 
     // descent path: connecting line + last 100 dots (fading)
@@ -299,7 +299,7 @@
       .attr("stroke", C.grad).attr("stroke-width", 2.5)
       .attr("marker-end", L ? "url(#gd2-arrow)" : null);
 
-    // dashed preview of the NEXT iterate (x,y) - alpha * grad
+    // dashed preview of the NEXT iterate (x,y) - rho * grad
     const xn = S.x - a * gx, yn = S.y - a * gy;
     gDyn.selectAll("line.next").data([0]).join("line").attr("class", "next")
       .attr("x1", xS(S.x)).attr("y1", yS(S.y)).attr("x2", xS(xn)).attr("y2", yS(yn))
@@ -375,9 +375,9 @@
 
   function wireControls() {
     document.getElementById("lr").addEventListener("input", () => {
-      document.getElementById("lrOut").value = alpha().toPrecision(3);
+      document.getElementById("lrOut").value = rho().toPrecision(3);
       pause();
-      resetDescent();      // restart from (x0, y0) so runs with different alpha compare cleanly
+      resetDescent();      // restart from (x0, y0) so runs with different rho compare cleanly
       drawDynamic();
     });
     document.querySelectorAll('input[name="func"]').forEach(el =>
@@ -406,7 +406,7 @@
       build();
       wireControls();
       drawDynamic();
-      document.getElementById("lrOut").value = alpha().toPrecision(3);
+      document.getElementById("lrOut").value = rho().toPrecision(3);
       const el = document.getElementById("ftex");
       el.innerHTML = "\\(" + F.tex + "\\)";
       if (window.MathJax && MathJax.startup && MathJax.startup.promise)
@@ -427,7 +427,7 @@
      contour lines of \(L(\beta_1,\beta_2)\); darker rings are higher.
      Drag anywhere on the plot to move the starting point
      \(\boldsymbol{\beta}^{(0)}\). Try: on the elliptical bowl the \(\beta_2\)-direction is twice as curved, so
-     it zigzags across the valley and diverges once \(\alpha > \tfrac12\) &mdash; the steepest
+     it zigzags across the valley and diverges once \(\rho > \tfrac12\) &mdash; the steepest
      direction sets the limit.</p>
 
   <div class="gd-panel">
@@ -460,7 +460,7 @@
     &nbsp;|&nbsp; \(L(\beta^{(t)}_1, \beta^{(t)}_2)\) = <b id="ro-f"></b>
     &nbsp;|&nbsp; \(\frac{\partial L(\beta^{(t)}_1, \beta^{(t)}_2)}{\partial \beta_1}\) = <b id="ro-g1"></b>
     &nbsp;|&nbsp; \(\frac{\partial L(\beta^{(t)}_1, \beta^{(t)}_2)}{\partial \beta_2}\) = <b id="ro-g2"></b>
-    &nbsp;|&nbsp; step \(-\alpha\, \nabla L(\beta^{(t)}_1, \beta^{(t)}_2)\) = (<b id="ro-s1"></b>, <b id="ro-s2"></b>)<span id="ro-state"></span>
+    &nbsp;|&nbsp; step \(-\rho\, \nabla L(\beta^{(t)}_1, \beta^{(t)}_2)\) = (<b id="ro-s1"></b>, <b id="ro-s2"></b>)<span id="ro-state"></span>
   </div>
 
   <div class="gd-controls">
@@ -476,11 +476,11 @@
     <fieldset>
       <legend>Step size (log scale)</legend>
       <div class="gd-row">
-        <label>\(\alpha\)</label>
+        <label>\(\rho\)</label>
         <input type="range" id="lr" min="-3" max="0.3" step="0.02" value="-1">
         <output id="lrOut">0.100</output>
       </div>
-      <div class="gd-row gd-hint">changing \(\alpha\) restarts from \(\boldsymbol{\beta}^{(0)}\)</div>
+      <div class="gd-row gd-hint">changing \(\rho\) restarts from \(\boldsymbol{\beta}^{(0)}\)</div>
     </fieldset>
 
     <fieldset>
@@ -496,8 +496,8 @@
 
   <div class="gd-eq">
     <div>current function: &nbsp;<span id="ftex"></span></div>
-    <div>update rule: &nbsp;\( \beta_1^{(t+1)} = \beta_1^{(t)} - \alpha\, \frac{\partial L(\beta_1^{(t)}, \beta_2^{(t)})}{\partial \beta_1},
-      \qquad \beta_2^{(t+1)} = \beta_2^{(t)} - \alpha\, \frac{\partial L(\beta_1^{(t)}, \beta_2^{(t)})}{\partial \beta_2} \)
+    <div>update rule: &nbsp;\( \beta_1^{(t+1)} = \beta_1^{(t)} - \rho\, \frac{\partial L(\beta_1^{(t)}, \beta_2^{(t)})}{\partial \beta_1},
+      \qquad \beta_2^{(t+1)} = \beta_2^{(t)} - \rho\, \frac{\partial L(\beta_1^{(t)}, \beta_2^{(t)})}{\partial \beta_2} \)
       <span style="color:#999">&nbsp;(each coordinate takes its own partial-derivative step;
       at the V-cone's kinks we use the subgradient 0)</span></div>
   </div>
