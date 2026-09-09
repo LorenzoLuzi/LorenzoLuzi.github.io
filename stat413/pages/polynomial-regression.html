@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Polynomial Regression: New Columns, Same Least Squares</title>
+  <link rel="stylesheet" href="../styling/global.css">
+
+  <!--
+    SOURCES (kept in source; not displayed in the applet UI)
+    - Data: the "ethanol" data of Brinkman (1981), "Ethanol Fuel - A Single-Cylinder Engine
+      Study of Efficiency and Exhaust Emissions", SAE Technical Paper 810345; as distributed in
+      R's lattice package (also Cleveland 1993, Visualizing Data) and saved to datasets/ethanol.csv.
+      88 runs of one engine: NOx = nitrogen oxides in the exhaust (micrograms per joule),
+      E = fuel/air equivalence ratio (1 = chemically exact mixture; <1 lean, >1 rich). The third
+      variable C (compression ratio) is ignored here; it explains most of the spread around the curve.
+    - Everything on screen is recomputed from those 88 rows at load: x = (E - mean E)/sd E
+      (mean 0.9265, population sd 0.2024), y = NOx - mean NOx (1.9574), columns x^k each minus
+      their mean (x^2: 1, x^3: -0.144, x^4: 1.800, x^5: -0.687), then least squares (QR via
+      twice-applied modified Gram-Schmidt) with no intercept. Reference numbers (numpy):
+      x only  -> beta = -0.115, MSE 1.255, R^2 0.010
+      x^2 only-> beta = -1.069, MSE 0.355, R^2 0.720  (a parabola with its vertex at the mean of E)
+      x, x^2  -> beta = -0.275, -1.118, MSE 0.281, R^2 0.779
+      x..x^4  -> beta = -0.568, -2.566, 0.262, 0.563, MSE 0.128, R^2 0.899
+      x..x^5  -> beta = -0.278, -2.812, -0.218, 0.690, 0.155, MSE 0.119, R^2 0.907
+    - No column of ones: centering y and every column of X before fitting is exactly
+      equivalent to fitting an intercept (the site's convention). Centering x BEFORE forming the
+      powers is what makes "x^2 alone" a parabola with its vertex at the mean (R^2 0.72) instead
+      of a near-flat line (R^2 0.035 on raw E), and what makes the fold visible when plotting
+      against x^2.
+  -->
+
+  <!-- applet-SPECIFIC styles only -->
+  <style>
+    body { font-family: system-ui, -apple-system, Arial, sans-serif; margin: 24px; color: #222; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    .lead { color: #555; max-width: 92ch; line-height: 1.5; margin-top: 4px; font-size: 16px; }
+
+    #eqrow { text-align: center; font-size: 23px; margin: 16px 0 6px; min-height: 40px; }
+    #eqrow .fn { font-size: 13px; color: #888; vertical-align: super; margin-left: 9px; }
+    .controls { text-align: center; margin: 4px 0 12px; font-size: 16px; }
+    .controls .cbl { margin: 0 9px; cursor: pointer; white-space: nowrap; }
+    .controls input { vertical-align: -2px; margin-right: 3px; }
+    .clabel { color: #555; margin-right: 6px; }
+
+    .wrap { display: flex; flex-wrap: wrap; gap: 26px; align-items: flex-start;
+            justify-content: center; margin-top: 6px; }
+    .panel h3 { font-size: 15px; font-weight: bold; margin: 0 0 4px; text-align: center; }
+    .read { text-align: center; font-size: 13.5px; color: #444; min-height: 20px;
+            font-variant-numeric: tabular-nums; }
+    .xlab { text-align: center; font-size: 15px; margin-top: -2px; min-height: 22px; }
+    .legend { text-align: center; font-size: 13px; color: #777; margin-top: 4px; max-width: 380px; line-height: 1.5; }
+    .sw { display: inline-block; width: 18px; height: 0; border-top: 3px solid #222; vertical-align: middle; margin: 0 3px 0 6px; }
+    .sw.dash { border-top-style: dashed; border-color: #999; }
+    .axis text { font-size: 11px; }
+    .cap { text-align: center; font-size: 14px; color: #444; margin-top: 4px; max-width: 380px; min-height: 40px; line-height: 1.5; }
+    svg { overflow: visible; }
+
+    #matpanel { flex: 1 1 560px; max-width: 920px; }      /* grows into the free width; 5 columns wrap only on narrow screens */
+    .mgroups { display: flex; flex-wrap: wrap; gap: 14px 22px; justify-content: center; align-items: flex-start;
+               font-size: 16px; min-height: 200px; padding-top: 4px; }
+    .mg { text-align: center; }
+    .mg.dim { opacity: .45; }
+    .mcap { font-size: 12.5px; color: #666; margin-bottom: 4px; min-height: 16px; white-space: nowrap; }
+    .mnote { text-align: center; font-size: 12.5px; color: #777; margin-top: 4px; line-height: 1.5; }
+
+    #foot { background: #f6f6f8; border: 1px solid #e0e0e6; border-radius: 6px; padding: 10px 14px;
+            font-size: 15px; max-width: 920px; margin: 24px auto 0; line-height: 1.8; color: #333; }
+  </style>
+
+  <!-- MathJax v3 (config BEFORE the library). Full bundle, no runtime loads.
+       MathJax's color package has NO 'HTML' model - use \textcolor[RGB]{r,g,b}. -->
+  <script>
+    window.MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], packages: { '[+]': ['color'] } },
+      // fixed scale: math typeset in a hidden buffer cannot measure the page font, and with
+      // matchFontHeight on it would come out at a different size than the static math
+      chtml: { matchFontHeight: false, scale: 1.1 }
+    };
+  </script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js"></script>
+  <script src="https://d3js.org/d3.v7.js"></script>
+
+  <script>
+  // ---- DATA (swap here) -----------------------------------------------------
+  // Brinkman's ethanol engine runs: one run per row, "E,NOx". EVERYTHING IS CENTERED before
+  // anything else happens: x = (E - mean E) / xScale, the response minus its mean, and every
+  // feature column x^k minus its own mean, so the fit needs no intercept (no column of ones) and
+  // the plots, the equation and the matrices share one coordinate system. xScale 'sd' also
+  // divides x by its standard deviation (the site's z-score convention) so that x^4, x^5 stay
+  // legible; set it to 1 for plain centering. Everything else derives from these rows.
+  const DS = {
+    xScale: 'sd',
+    xTeX: 'x',                                   // the variable name in every formula
+    xUnit: 'x\\;\\;(E\\text{, centered and divided by its sd})',   // axis label of the fit panel
+    yTeX: '\\text{NOx}',
+    yAxis: 'NOx, centered (\u00b5g/J)',             // plain-text y-axis title
+    xFmt: '.3f', yFmt: '.2f',                    // how the data print in the matrices
+    maxPower: 5,                                 // columns x, x^2, ..., x^maxPower on offer
+    shownRows: [0, 1, 2, 3, -1],                 // rows printed in the matrix (negative = from the end)
+    raw: '0.907,3.741;0.761,2.295;1.108,1.498;1.016,2.881;1.189,0.76;1.001,3.12;1.231,0.638;1.123,1.17;1.042,2.358;1.215,0.606;0.93,3.669;1.152,1;1.138,0.981;0.601,1.192;0.696,0.926;0.686,1.59;1.072,1.806;1.074,1.962;0.934,4.028;0.808,3.148;1.071,1.836;1.009,2.845;1.142,1.013;1.229,0.414;1.175,0.812;0.568,0.374;0.977,3.623;0.767,1.869;1.006,2.836;0.893,3.567;1.152,0.866;0.693,1.369;1.232,0.542;1.036,2.739;1.125,1.2;1.081,1.719;0.868,3.423;0.762,1.634;1.144,1.021;1.045,2.157;0.797,3.361;1.115,1.39;1.07,1.947;1.219,0.962;0.637,0.571;0.733,2.219;0.715,1.419;0.872,3.519;0.765,1.732;0.878,3.206;0.811,2.471;0.676,1.777;1.045,2.571;0.968,3.952;0.846,3.931;0.684,1.587;0.729,1.397;0.911,3.536;0.808,2.202;1.168,0.756;0.749,1.62;0.892,3.656;1.002,2.964;0.812,3.76;1.23,0.672;0.804,3.677;0.813,3.517;1.002,3.29;0.696,1.139;1.199,0.727;1.03,2.581;0.602,0.923;0.694,1.527;0.816,3.388;1.037,2.085;1.181,0.966;0.899,3.488;1.227,0.754;1.18,0.797;0.795,2.064;0.99,3.732;1.201,0.586;0.629,0.561;0.608,0.563;0.584,0.678;0.562,0.37;0.535,0.53;0.655,1.9'
+  };
+  // Okabe-Ito, one color per power: x, x^2, x^3, x^4, x^5 (used everywhere a power appears)
+  const POWCOLOR = ['#0072B2', '#D55E00', '#009E73', '#CC79A7', '#E69F00'];
+  // ---------------------------------------------------------------------------
+
+  const ROWS = DS.raw.split(';').map(s => s.split(',').map(Number));
+  const N = ROWS.length;
+  const E0 = ROWS.map(r => r[0]), Y0 = ROWS.map(r => r[1]);
+  const XBAR = d3.mean(E0), XSD = Math.sqrt(d3.mean(E0, v => (v - XBAR) ** 2)), YBAR = d3.mean(Y0);
+  const XS = DS.xScale === 'sd' ? XSD : (+DS.xScale || 1);
+  const X0 = E0.map(v => (v - XBAR) / XS);         // x: centered (and scaled) E
+  const Y = Y0.map(v => v - YBAR);                 // the response, centered
+  const MEANS = d3.range(0, DS.maxPower + 1).map(k => (k === 1 ? 0 : d3.mean(X0, v => v ** k)));   // mean of x^k (x itself is already centered)
+  const col = (v, k) => v ** k - MEANS[k];         // the centered feature column x^k, evaluated at x = v
+  const SHOWN = DS.shownRows.map(i => (i < 0 ? N + i : i));
+
+  const W = 380, H = 300, m = { t: 12, r: 14, b: 34, l: 50 };
+  const CURVE = '#222', GHOST = '#999', DOT = '#7a8ea3';
+
+  const hexRGB = h => [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)).join(',');
+  const texc = (hex, s) => `\\textcolor[RGB]{${hexRGB(hex.replace('#', ''))}}{${s}}`;
+  // ASCII minus: d3's U+2212 would go into TeX source; TeX wants '-'
+  const f2 = v => d3.format('.2f')(v).replace('\u2212', '-');                 // coefficients
+  const fx = v => d3.format(DS.xFmt)(v).replace('\u2212', '-'), fy = v => d3.format(DS.yFmt)(v).replace('\u2212', '-');
+  const powTeX = k => (k === 1 ? DS.xTeX : `${DS.xTeX}^{${k}}`);
+  const pc = k => POWCOLOR[k - 1];
+
+  // ---- least squares on centered columns (== an intercept, without a column of ones) ----
+  // QR by modified Gram-Schmidt applied twice (re-orthogonalization), then back-substitution.
+  function lstsq(A, b) {
+    const n = A.length, d = A[0].length;
+    const V = Array.from({ length: d }, (_, j) => A.map(r => r[j]));
+    const R = Array.from({ length: d }, () => new Array(d).fill(0));
+    const dot = (u, v) => { let s = 0; for (let i = 0; i < n; i++) s += u[i] * v[i]; return s; };
+    for (let j = 0; j < d; j++) {
+      for (let pass = 0; pass < 2; pass++)
+        for (let i = 0; i < j; i++) {
+          const r = dot(V[i], V[j]); R[i][j] += r;
+          for (let t = 0; t < n; t++) V[j][t] -= r * V[i][t];
+        }
+      R[j][j] = Math.sqrt(dot(V[j], V[j]));
+      for (let t = 0; t < n; t++) V[j][t] /= R[j][j];
+    }
+    const qb = V.map(q => dot(q, b)), beta = new Array(d).fill(0);
+    for (let j = d - 1; j >= 0; j--) {
+      let s = qb[j];
+      for (let i = j + 1; i < d; i++) s -= R[j][i] * beta[i];
+      beta[j] = s / R[j][j];
+    }
+    return beta;
+  }
+
+  // powers: sorted exponents in the model, e.g. [1, 2]. Returns the fitted function too.
+  function fitPoly(powers) {
+    const A = X0.map(v => powers.map(k => col(v, k)));          // centered columns, centered y: no intercept
+    const beta = lstsq(A, Y);
+    const f = x => d3.sum(powers, (k, j) => beta[j] * col(x, k));
+    const mse = d3.mean(X0, (v, i) => (Y[i] - f(v)) ** 2);
+    return { powers, beta, f, mse };
+  }
+
+  // ALL typesets share ONE chain (MathJax v3 corrupts on concurrent calls);
+  // typesetClear() first, so items whose DOM was replaced cannot crash the next run.
+  function mjRun(els) {
+    const go = () => {
+      const live = (els || []).filter(e => e && e.isConnected);
+      if (!live.length || !window.MathJax || !MathJax.typesetPromise) return null;
+      if (MathJax.typesetClear) MathJax.typesetClear();
+      return MathJax.typesetPromise(live).catch(() => {});
+    };
+    window.__mjChain = (window.__mjChain || Promise.resolve()).then(() => {
+      if (window.MathJax && MathJax.typesetPromise) return go();
+      return new Promise(r => setTimeout(r, 150)).then(go);      // bundle still loading
+    });
+    return window.__mjChain;
+  }
+
+  // A live equation slot holds TWO children and swaps them, so the browser never
+  // paints raw \( ... \) source in the frames between the write and MathJax finishing.
+  function MathSlot(el) {
+    this.a = document.createElement('span');
+    this.b = document.createElement('span');
+    this.b.style.display = 'none';
+    el.append(this.a, this.b);
+    this.showA = true; this.cur = null;
+  }
+  MathSlot.prototype.set = function (tex) {
+    if (tex === this.cur) return;
+    this.cur = tex;
+    const hidden = this.showA ? this.b : this.a;
+    const vis = this.showA ? this.a : this.b;
+    hidden.innerHTML = tex;
+    this.showA = !this.showA;
+    mjRun([hidden]).then(() => { hidden.style.display = ''; vis.style.display = 'none'; });
+  };
+
+  // ---- TeX builders -----------------------------------------------------------
+  // A bracketed matrix with its column labels sitting ABOVE the bracket: the label row is
+  // an array whose cells are \hphantom copies of each column's widest entry, so its columns
+  // are exactly as wide as the matrix's; the outer array centers both, and the two bracket
+  // halves are equal, so the labels land over their columns.
+  function labeledMatrix(headers, cols, dims) {
+    const widest = cols.map(c => c.reduce((a, b) => (b.length > a.length ? b : a), ''));
+    const head = headers.map((h, j) => `\\overset{\\textstyle ${h}\\vphantom{x^2}}{\\hphantom{${widest[j]}}}`).join(' & ');
+    const nrow = cols[0].length, spec = 'c'.repeat(cols.length);
+    const body = d3.range(nrow).map(i => cols.map(c => c[i]).join(' & ')).join(' \\\\ ');
+    return `\\underset{${dims}}{\\begin{array}{c} \\begin{array}{${spec}} ${head} \\end{array} \\\\[-3pt] ` +
+           `\\begin{bmatrix} ${body} \\end{bmatrix} \\end{array}}`;
+  }
+  // the shown rows of a column, with a \vdots row before the last one
+  const withDots = vals => [...vals.slice(0, -1), '\\vdots', vals[vals.length - 1]];
+
+  function yTeX() {
+    const col = withDots(SHOWN.map(i => fy(Y[i])));
+    return `\\mathbf{y} = ${labeledMatrix([DS.yTeX], [col], `${N} \\times 1`)}`;
+  }
+  function xTeX(model) {
+    const cols = model.powers.map(k => withDots(SHOWN.map(i => fx(col(X0[i], k)))));
+    const heads = model.powers.map(k => texc(pc(k), powTeX(k)));
+    return `\\mathbf{X} = ${labeledMatrix(heads, cols, `${N} \\times ${model.powers.length}`)}`;
+  }
+  function betaTeX(model) {
+    const body = model.powers.map((k, j) => texc(pc(k), f2(model.beta[j]))).join(' \\\\ ');
+    return `\\hat{\\boldsymbol\\beta} = \\underset{${model.powers.length} \\times 1}{\\begin{bmatrix} ${body} \\end{bmatrix}}`;
+  }
+  function eqTeX(model) {
+    const terms = model.powers.map((k, j) =>
+      texc(pc(k), `\\hat\\beta_{${k}}\\,${powTeX(k)}`));
+    // centered variables throughout, so no intercept: see the footnote (*) in the footer
+    return `\\( \\widehat{${DS.yTeX}} \\;=\\; ${terms.join(' \\;+\\; ')} \\)`;
+  }
+
+  function main() {
+    if (main.done) return; main.done = true;                 // jsdom fires load twice
+
+    const LINE = fitPoly([1]);                                 // the plain line, kept as the reference
+    const state = { powers: [2], axis: 2, model: fitPoly([2]) };            // opens on the x^2-only parabola vs the plain line
+
+    // ---- equation + controls ------------------------------------------------
+    const eqSlot = new MathSlot(document.getElementById('eqbox'));
+    const cbox = d3.select('#cols');
+    d3.range(1, DS.maxPower + 1).forEach(k => {
+      const lab = cbox.append('label').attr('class', 'cbl').style('color', pc(k));
+      lab.append('input').attr('type', 'checkbox').attr('id', 'pow' + k).property('checked', state.powers.includes(k))
+        .on('change', () => {
+          const on = d3.range(1, DS.maxPower + 1).filter(j => document.getElementById('pow' + j).checked);
+          if (!on.length) { document.getElementById('pow' + k).checked = true; return; }   // never an empty X
+          setPowers(on);
+        });
+      lab.append('span').html(`\\(${powTeX(k)}\\)`);
+    });
+    const abox = d3.select('#axisctl');
+    d3.range(1, DS.maxPower + 1).forEach(k => {           // plain x too, so the two plots can be made identical
+      const lab = abox.append('label').attr('class', 'cbl').style('color', pc(k));
+      lab.append('input').attr('type', 'radio').attr('name', 'axis').attr('value', k).attr('id', 'ax' + k)
+        .property('checked', k === state.axis).on('change', () => setAxis(k));
+      lab.append('span').html(`\\(${powTeX(k)}\\)`);
+    });
+
+    // ---- panels -------------------------------------------------------------
+    const pad = 0.06 * (d3.max(Y) - d3.min(Y));
+    const y = d3.scaleLinear().domain([d3.min(Y) - pad, d3.max(Y) + pad]).nice().range([H - m.b, m.t]);
+    const xs = d3.range(200).map(i => d3.min(X0) + (d3.max(X0) - d3.min(X0)) * i / 199);   // curve support = data range
+
+    function makePanel(id, xDomain) {
+      const svg = d3.select('#' + id).append('svg').attr('width', W).attr('height', H);
+      const x = d3.scaleLinear().domain(xDomain).nice().range([m.l, W - m.r]);
+      svg.append('clipPath').attr('id', id + '-clip').append('rect')
+        .attr('x', m.l).attr('y', m.t).attr('width', W - m.l - m.r).attr('height', H - m.t - m.b);
+      svg.append('g').attr('class', 'axis x').attr('transform', `translate(0,${H - m.b})`).call(d3.axisBottom(x).ticks(6));
+      svg.append('g').attr('class', 'axis y').attr('transform', `translate(${m.l},0)`).call(d3.axisLeft(y).ticks(6));
+      svg.append('text').attr('class', 'ytitle').attr('transform', `translate(13,${(m.t + H - m.b) / 2}) rotate(-90)`)
+        .attr('text-anchor', 'middle').attr('font-size', 12).attr('fill', '#333').text(DS.yAxis);
+      const g = svg.append('g').attr('clip-path', `url(#${id}-clip)`);
+      const dots = g.append('g');
+      const ghost = g.append('path').attr('class', 'ghost').attr('fill', 'none').attr('stroke', GHOST)
+        .attr('stroke-width', 2.5).attr('stroke-dasharray', '7 5');
+      const curve = g.append('path').attr('class', 'curve').attr('fill', 'none').attr('stroke', CURVE).attr('stroke-width', 3);
+      return { svg, x, g, dots, ghost, curve };
+    }
+    const P1 = makePanel('p1', d3.extent(X0));
+    const P3 = makePanel('p3', d3.extent(X0, v => col(v, state.axis)));
+    // samples outside the y-range are dropped (not merely clipped), so no path geometry ever
+    // leaves the plot rect and lands in the tick-label band
+    const inY = d => d[1] >= y.domain()[0] && d[1] <= y.domain()[1];
+    const line = (P, u) => d3.line().defined(inY).x(d => P.x(u(d[0]))).y(d => y(d[1]));
+
+    function drawData(P, u) {
+      P.dots.selectAll('circle').data(X0.map((v, i) => [v, Y[i]])).join('circle')
+        .attr('r', 2.6).attr('fill', DOT).attr('opacity', .55).attr('cx', d => P.x(u(d[0]))).attr('cy', d => y(d[1]));
+    }
+    function drawFits(P, u) {
+      const isLine = state.powers.length === 1 && state.powers[0] === 1;
+      P.curve.attr('d', line(P, u)(xs.map(v => [v, state.model.f(v)])));
+      P.ghost.attr('d', line(P, u)(xs.map(v => [v, LINE.f(v)]))).style('display', isLine ? 'none' : null);
+    }
+
+    // static pieces: typeset once
+    const xlab1 = document.getElementById('xlab1');
+    xlab1.innerHTML = `\\( ${DS.xUnit} \\)`;
+    document.getElementById('yvec').innerHTML = `\\( ${yTeX()} \\)`;
+    document.getElementById('linemat').innerHTML = `\\( ${xTeX(LINE)} \\quad ${betaTeX(LINE)} \\)`;
+    const polyg = document.getElementById('polyg'), capA = document.getElementById('polycapA'), capB = document.getElementById('polycapB');
+    drawData(P1, v => v);
+
+    // live pieces
+    const matSlot = new MathSlot(document.getElementById('xmat'));
+    const xlab3 = new MathSlot(document.getElementById('xlab3'));
+    const cap3 = new MathSlot(document.getElementById('cap3'));
+    const leg1 = document.getElementById('leg1'), leg3 = document.getElementById('leg3'),
+          read1 = document.getElementById('read1');
+
+    function setPowers(on) { state.powers = on.slice().sort((a, b) => a - b); state.model = fitPoly(state.powers); render(); }
+    function setAxis(k) {
+      state.axis = k;
+      P3.x.domain(d3.extent(X0, v => col(v, k))).nice();
+      P3.svg.select('.axis.x').call(d3.axisBottom(P3.x).ticks(6));
+      render();
+    }
+
+    function render() {
+      const mdl = state.model, k = state.axis, u = v => col(v, k);      // horizontal axis = the column x^k
+      const isLine = state.powers.length === 1 && state.powers[0] === 1;
+      const straight = state.powers.length === 1 && state.powers[0] === k;
+
+      eqSlot.set(eqTeX(mdl));
+      matSlot.set(`\\( ${xTeX(mdl)} \\quad ${betaTeX(mdl)} \\)`);
+      polyg.classList.toggle('dim', isLine);
+      capA.hidden = isLine; capB.hidden = !isLine;
+
+      drawFits(P1, v => v);
+      read1.textContent = isLine ? `training MSE ${f2(mdl.mse)}; this model is the plain line`
+                                 : `training MSE ${f2(mdl.mse)}; the plain line: ${f2(LINE.mse)}`;
+      leg1.innerHTML = `<span class="sw"></span>fitted model` +
+        (isLine ? '' : ` &nbsp;<span class="sw dash"></span>the plain line (\\(x\\) only), kept for comparison`);
+      leg3.innerHTML = `<span class="sw"></span>fitted model` +
+        (isLine ? '' : ` &nbsp;<span class="sw dash"></span>the plain line (\\(x\\) only)${k === 1 ? '' : ', not straight on this axis'}`);
+      mjRun([leg1, leg3]);
+
+      drawData(P3, u); drawFits(P3, u);
+      xlab3.set(`\\( ${texc(pc(k), powTeX(k))} \\)`);
+      const cols = state.powers.map(j => texc(pc(j), powTeX(j))).join(',\\,');
+      // cap3.set(straight
+        // ? `straight: \\( \\mathbf{X} \\) has the single column \\( ${texc(pc(k), powTeX(k))} \\), so \\( \\widehat{${DS.yTeX}} \\) is a linear function of \\( ${texc(pc(k), powTeX(k))} \\).`
+        // : `curved: \\( \\widehat{${DS.yTeX}} \\) is a linear function of \\( ${cols} \\) (the columns of \\( \\mathbf{X} \\)), and that is not a linear function of \\( ${texc(pc(k), powTeX(k))} \\).`);
+    }
+
+    window.__polyApi = {
+      state: () => ({ powers: state.powers.slice(), axis: state.axis, beta: state.model.beta.slice(),
+                      mse: state.model.mse, xbar: XBAR, xsd: XSD, ybar: YBAR, xscale: XS,
+                      lineMse: LINE.mse, n: N }),
+      f: x => state.model.f(x), lineF: x => LINE.f(x),
+      setPowers: on => { d3.range(1, DS.maxPower + 1).forEach(j => { document.getElementById('pow' + j).checked = on.includes(j); }); setPowers(on); },
+      setAxis: k => { document.getElementById('ax' + k).checked = true; setAxis(k); },
+      fit: fitPoly, data: () => ({ x: X0.slice(), y: Y.slice(), e: E0.slice(), nox: Y0.slice() }), means: () => MEANS.slice(), col,
+      shown: () => SHOWN.slice(),
+      tex: () => ({ eq: eqSlot.cur, mat: matSlot.cur, cap: cap3.cur, xlab: xlab3.cur, y: yTeX(),
+                    line: `${xTeX(LINE)} \\quad ${betaTeX(LINE)}` })
+    };
+
+    mjRun([document.getElementById('lead'), document.getElementById('cols'), document.getElementById('axisctl'),
+           xlab1, document.getElementById('yvec'), document.getElementById('linemat'), capA, capB,
+           document.getElementById('matnote'), document.getElementById('foot')]);
+    render();
+  }
+
+  window.addEventListener('load', main);
+  </script>
+</head>
+
+<body>
+  <h1>Polynomial Regression: New Columns, Same Least Squares</h1>
+  <p class="lead" id="lead">This dataset is of an experiment using the internal combusion engine (like what cars have). We are trying to predict a pollutant \(y=\) NOx (the concentration of nitrogen oxides in the exhaust) based on a measure of how rich or lean the fuel–air mixture is, \(x=\) E. 
+    Everything is centered, so the plots, the equation and the matrices share one coordinate
+    system. </p>
+
+  <div id="eqrow"><span id="eqbox"></span><sup class="fn">*</sup></div>
+  <div class="controls"><span class="clabel">columns of \(\mathbf{X}\):</span><span id="cols"></span></div>
+
+  <div class="wrap">
+    <div class="panel">
+      <h3>The fit</h3>
+      <div class="read" id="read1"></div>
+      <div id="p1"></div>
+      <div class="xlab" id="xlab1"></div>
+      <div class="legend" id="leg1"></div>
+    </div>
+
+    <div class="panel" id="matpanel">
+      <h3>The matrices</h3>
+      <div class="mgroups">
+        <div class="mg"><div class="mcap">the response</div><div id="yvec"></div></div>
+        <div class="mg"><div class="mcap">linear regression: the plain line</div><div id="linemat"></div></div>
+        <div class="mg" id="polyg">
+          <div class="mcap"><span id="polycapA">polynomial regression: the ticked columns</span><span id="polycapB" hidden>only \(x\) is ticked, so this is the plain line again</span></div>
+          <div id="xmat"></div>
+        </div>
+      </div>
+      <div class="mnote" id="matnote">rows shown: every column is centered (mean zero),
+        so there is no column of ones.</div>
+    </div>
+
+  </div>
+
+  <div class="wrap">
+    <div class="panel">
+      <h3>Same fitted function, other horizontal axis</h3>
+      <div class="controls" style="margin:0 0 2px; font-size:15px"><span class="clabel">horizontal axis:</span><span id="axisctl"></span></div>
+      <div id="p3"></div>
+      <div class="xlab" id="xlab3"></div>
+      <div class="legend" id="leg3"></div>
+      <div class="cap" id="cap3"></div>
+    </div>
+  </div>
+
+  <!-- <p id="foot"><sup>*</sup> No biases anywhere, because everything is centered: \(x\) is \(E\) minus its mean
+    (and divided by its standard deviation, so the powers stay legible), \(\text{NOx}\) is \(\text{NOx}\) minus its
+    mean, and each column \(x^k\) of \(\mathbf{X}\) has its own mean removed. The intercept is then exactly zero,
+    so no column of ones is needed and the equation is the curve drawn in the plots. The fit is ordinary least squares,
+    \(\hat{\boldsymbol\beta} = \arg\min_{\boldsymbol\beta} \|\mathbf{y} - \mathbf{X}\boldsymbol\beta\|^2\);
+    nothing about the method changed, only the columns did. Training MSE is
+    \(\frac{1}{n}\sum_i (\text{NOx}_i - \widehat{\text{NOx}}_i)^2\).</p> -->
+</body>
+</html>

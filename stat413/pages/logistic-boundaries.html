@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Logistic Regression Decision Boundaries</title>
+  <link rel="stylesheet" href="../styling/global.css">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; color: #222; }
+    h1 { font-size: 24px; }
+    .lb-intro { max-width: 980px; }
+    .lb-eq { font-size: 15px; margin: 10px 0; max-width: 980px; }
+    .lb-controls { margin: 12px 0; display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; }
+    .lb-controls fieldset { border: 1px solid #ccc; border-radius: 6px; padding: 10px 14px; }
+    .lb-controls legend { font-weight: bold; font-size: 13px; padding: 0 6px; }
+    .lb-row { margin: 6px 0; font-size: 14px; }
+    .lb-radio { margin-right: 12px; white-space: nowrap; }
+    .lb-legend { font-size: 14px; margin: 6px 0; }
+    .lb-legend .sw { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin: 0 4px 0 14px; vertical-align: -1px; }
+    .lb-note { font-size: 13px; color: #555; max-width: 980px; margin: 6px 0 10px 0; }
+    .lb-stage { position: relative; display: inline-block; }
+    .lb-stage svg { display: block; }
+    .lb-stage.threed svg { cursor: grab; }
+    .lb-stage.threed svg:active { cursor: grabbing; }
+    .axl { position: absolute; font-size: 13px; color: #333; pointer-events: none; }
+    .axl-x { transform: translateX(-50%); }
+    .axl-y { transform: translate(-50%, -50%) rotate(-90deg); left: 4px; white-space: nowrap; }
+    .axl3 { position: absolute; font-size: 12px; color: #333; pointer-events: none; transform: translate(-50%, -50%); white-space: nowrap; }
+    .lb-cap { font-size: 14px; margin-top: 6px; max-width: 700px; }
+    .lb-fit { font-size: 13.5px; font-variant-numeric: tabular-nums; margin-top: 4px; max-width: 700px; }
+    .ticktext { font-size: 10px; fill: #555; }
+    body[data-k="2"] .k3 { display: none; }
+    body[data-k="3"] .k2 { display: none; }
+  </style>
+
+  <script src="https://d3js.org/d3.v7.js"></script>
+  <script>window.MathJax = {
+    tex: { inlineMath: [['\\(', '\\)'], ['$', '$']] },
+    svg: { fontCache: 'global' }
+  };</script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</head>
+
+<body data-k="2">
+  <h1>Logistic Regression Decision Boundaries</h1>
+  <p class="lb-intro">
+    Palmer penguins dataset (bill length, bill depth, flipper length; NA rows dropped).
+    The model is fit by gradient ascent on the log-likelihood. Drag the 3D view to rotate.
+  </p>
+
+  <div class="lb-eq">
+    <span class="k2">\( p(\mathbf{x}) = \dfrac{e^{\beta_0 + \boldsymbol\beta^\top \mathbf{x}}}{1 + e^{\beta_0 + \boldsymbol\beta^\top \mathbf{x}}}
+      \qquad \text{boundary: } p(\mathbf{x}) = \tfrac12 \iff \beta_0 + \boldsymbol\beta^\top \mathbf{x} = 0 \)</span>
+    <span class="k3">\( p_k(\mathbf{x}) = \dfrac{e^{s_k(\mathbf{x})}}{\sum_j e^{s_j(\mathbf{x})}},\quad
+      s_k(\mathbf{x}) = \beta_{0k} + \boldsymbol\beta_k^\top \mathbf{x}
+      \qquad \text{boundary: the top two } p_k \text{ tie} \)</span>
+  </div>
+
+  <div class="lb-controls">
+    <fieldset>
+      <legend>Dimension of x</legend>
+      <div class="lb-row">
+        <label class="lb-radio"><input type="radio" name="lb-dim" value="1" checked> 1D (bill length)</label>
+        <label class="lb-radio"><input type="radio" name="lb-dim" value="2"> 2D (+ bill depth)</label>
+        <label class="lb-radio"><input type="radio" name="lb-dim" value="3"> 3D (+ flipper length)</label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Classes</legend>
+      <div class="lb-row">
+        <label class="lb-radio"><input type="radio" name="lb-k" value="2" checked> 2 (Adelie vs Chinstrap)</label>
+        <label class="lb-radio"><input type="radio" name="lb-k" value="3"> 3 (all species)</label>
+      </div>
+    </fieldset>
+  </div>
+
+  <div class="lb-legend" id="lb-legend"></div>
+
+  <div class="lb-stage" id="lb-stage">
+    <svg></svg>
+  </div>
+  <div class="lb-cap" id="lb-cap"></div>
+  <div class="lb-fit" id="lb-fit"></div>
+
+<script>
+"use strict";
+
+// =====================================================================
+// ---- DATA (swap here) ----
+// Palmer penguins (datasets/penguins.csv, NA rows dropped). Everything
+// below (standardization, fits, plot domains) derives from it.
+// =====================================================================
+const RAW = {"species": ["Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap"], "bill_length_mm": [39.1, 39.5, 40.3, 36.7, 39.3, 38.9, 39.2, 34.1, 42.0, 37.8, 37.8, 41.1, 38.6, 34.6, 36.6, 38.7, 42.5, 34.4, 46.0, 37.8, 37.7, 35.9, 38.2, 38.8, 35.3, 40.6, 40.5, 37.9, 40.5, 39.5, 37.2, 39.5, 40.9, 36.4, 39.2, 38.8, 42.2, 37.6, 39.8, 36.5, 40.8, 36.0, 44.1, 37.0, 39.6, 41.1, 37.5, 36.0, 42.3, 39.6, 40.1, 35.0, 42.0, 34.5, 41.4, 39.0, 40.6, 36.5, 37.6, 35.7, 41.3, 37.6, 41.1, 36.4, 41.6, 35.5, 41.1, 35.9, 41.8, 33.5, 39.7, 39.6, 45.8, 35.5, 42.8, 40.9, 37.2, 36.2, 42.1, 34.6, 42.9, 36.7, 35.1, 37.3, 41.3, 36.3, 36.9, 38.3, 38.9, 35.7, 41.1, 34.0, 39.6, 36.2, 40.8, 38.1, 40.3, 33.1, 43.2, 35.0, 41.0, 37.7, 37.8, 37.9, 39.7, 38.6, 38.2, 38.1, 43.2, 38.1, 45.6, 39.7, 42.2, 39.6, 42.7, 38.6, 37.3, 35.7, 41.1, 36.2, 37.7, 40.2, 41.4, 35.2, 40.6, 38.8, 41.5, 39.0, 44.1, 38.5, 43.1, 36.8, 37.5, 38.1, 41.1, 35.6, 40.2, 37.0, 39.7, 40.2, 40.6, 32.1, 40.7, 37.3, 39.0, 39.2, 36.6, 36.0, 37.8, 36.0, 41.5, 46.1, 50.0, 48.7, 50.0, 47.6, 46.5, 45.4, 46.7, 43.3, 46.8, 40.9, 49.0, 45.5, 48.4, 45.8, 49.3, 42.0, 49.2, 46.2, 48.7, 50.2, 45.1, 46.5, 46.3, 42.9, 46.1, 44.5, 47.8, 48.2, 50.0, 47.3, 42.8, 45.1, 59.6, 49.1, 48.4, 42.6, 44.4, 44.0, 48.7, 42.7, 49.6, 45.3, 49.6, 50.5, 43.6, 45.5, 50.5, 44.9, 45.2, 46.6, 48.5, 45.1, 50.1, 46.5, 45.0, 43.8, 45.5, 43.2, 50.4, 45.3, 46.2, 45.7, 54.3, 45.8, 49.8, 46.2, 49.5, 43.5, 50.7, 47.7, 46.4, 48.2, 46.5, 46.4, 48.6, 47.5, 51.1, 45.2, 45.2, 49.1, 52.5, 47.4, 50.0, 44.9, 50.8, 43.4, 51.3, 47.5, 52.1, 47.5, 52.2, 45.5, 49.5, 44.5, 50.8, 49.4, 46.9, 48.4, 51.1, 48.5, 55.9, 47.2, 49.1, 47.3, 46.8, 41.7, 53.4, 43.3, 48.1, 50.5, 49.8, 43.5, 51.5, 46.2, 55.1, 44.5, 48.8, 47.2, 46.8, 50.4, 45.2, 49.9, 46.5, 50.0, 51.3, 45.4, 52.7, 45.2, 46.1, 51.3, 46.0, 51.3, 46.6, 51.7, 47.0, 52.0, 45.9, 50.5, 50.3, 58.0, 46.4, 49.2, 42.4, 48.5, 43.2, 50.6, 46.7, 52.0, 50.5, 49.5, 46.4, 52.8, 40.9, 54.2, 42.5, 51.0, 49.7, 47.5, 47.6, 52.0, 46.9, 53.5, 49.0, 46.2, 50.9, 45.5, 50.9, 50.8, 50.1, 49.0, 51.5, 49.8, 48.1, 51.4, 45.7, 50.7, 42.5, 52.2, 45.2, 49.3, 50.2, 45.6, 51.9, 46.8, 45.7, 55.8, 43.5, 49.6, 50.8, 50.2], "bill_depth_mm": [18.7, 17.4, 18.0, 19.3, 20.6, 17.8, 19.6, 18.1, 20.2, 17.1, 17.3, 17.6, 21.2, 21.1, 17.8, 19.0, 20.7, 18.4, 21.5, 18.3, 18.7, 19.2, 18.1, 17.2, 18.9, 18.6, 17.9, 18.6, 18.9, 16.7, 18.1, 17.8, 18.9, 17.0, 21.1, 20.0, 18.5, 19.3, 19.1, 18.0, 18.4, 18.5, 19.7, 16.9, 18.8, 19.0, 18.9, 17.9, 21.2, 17.7, 18.9, 17.9, 19.5, 18.1, 18.6, 17.5, 18.8, 16.6, 19.1, 16.9, 21.1, 17.0, 18.2, 17.1, 18.0, 16.2, 19.1, 16.6, 19.4, 19.0, 18.4, 17.2, 18.9, 17.5, 18.5, 16.8, 19.4, 16.1, 19.1, 17.2, 17.6, 18.8, 19.4, 17.8, 20.3, 19.5, 18.6, 19.2, 18.8, 18.0, 18.1, 17.1, 18.1, 17.3, 18.9, 18.6, 18.5, 16.1, 18.5, 17.9, 20.0, 16.0, 20.0, 18.6, 18.9, 17.2, 20.0, 17.0, 19.0, 16.5, 20.3, 17.7, 19.5, 20.7, 18.3, 17.0, 20.5, 17.0, 18.6, 17.2, 19.8, 17.0, 18.5, 15.9, 19.0, 17.6, 18.3, 17.1, 18.0, 17.9, 19.2, 18.5, 18.5, 17.6, 17.5, 17.5, 20.1, 16.5, 17.9, 17.1, 17.2, 15.5, 17.0, 16.8, 18.7, 18.6, 18.4, 17.8, 18.1, 17.1, 18.5, 13.2, 16.3, 14.1, 15.2, 14.5, 13.5, 14.6, 15.3, 13.4, 15.4, 13.7, 16.1, 13.7, 14.6, 14.6, 15.7, 13.5, 15.2, 14.5, 15.1, 14.3, 14.5, 14.5, 15.8, 13.1, 15.1, 14.3, 15.0, 14.3, 15.3, 15.3, 14.2, 14.5, 17.0, 14.8, 16.3, 13.7, 17.3, 13.6, 15.7, 13.7, 16.0, 13.7, 15.0, 15.9, 13.9, 13.9, 15.9, 13.3, 15.8, 14.2, 14.1, 14.4, 15.0, 14.4, 15.4, 13.9, 15.0, 14.5, 15.3, 13.8, 14.9, 13.9, 15.7, 14.2, 16.8, 14.4, 16.2, 14.2, 15.0, 15.0, 15.6, 15.6, 14.8, 15.0, 16.0, 14.2, 16.3, 13.8, 16.4, 14.5, 15.6, 14.6, 15.9, 13.8, 17.3, 14.4, 14.2, 14.0, 17.0, 15.0, 17.1, 14.5, 16.1, 14.7, 15.7, 15.8, 14.6, 14.4, 16.5, 15.0, 17.0, 15.5, 15.0, 13.8, 16.1, 14.7, 15.8, 14.0, 15.1, 15.2, 15.9, 15.2, 16.3, 14.1, 16.0, 15.7, 16.2, 13.7, 14.3, 15.7, 14.8, 16.1, 17.9, 19.5, 19.2, 18.7, 19.8, 17.8, 18.2, 18.2, 18.9, 19.9, 17.8, 20.3, 17.3, 18.1, 17.1, 19.6, 20.0, 17.8, 18.6, 18.2, 17.3, 17.5, 16.6, 19.4, 17.9, 19.0, 18.4, 19.0, 17.8, 20.0, 16.6, 20.8, 16.7, 18.8, 18.6, 16.8, 18.3, 20.7, 16.6, 19.9, 19.5, 17.5, 19.1, 17.0, 17.9, 18.5, 17.9, 19.6, 18.7, 17.3, 16.4, 19.0, 17.3, 19.7, 17.3, 18.8, 16.6, 19.9, 18.8, 19.4, 19.5, 16.5, 17.0, 19.8, 18.1, 18.2, 19.0, 18.7], "flipper_length_mm": [181.0, 186.0, 195.0, 193.0, 190.0, 181.0, 195.0, 193.0, 190.0, 186.0, 180.0, 182.0, 191.0, 198.0, 185.0, 195.0, 197.0, 184.0, 194.0, 174.0, 180.0, 189.0, 185.0, 180.0, 187.0, 183.0, 187.0, 172.0, 180.0, 178.0, 178.0, 188.0, 184.0, 195.0, 196.0, 190.0, 180.0, 181.0, 184.0, 182.0, 195.0, 186.0, 196.0, 185.0, 190.0, 182.0, 179.0, 190.0, 191.0, 186.0, 188.0, 190.0, 200.0, 187.0, 191.0, 186.0, 193.0, 181.0, 194.0, 185.0, 195.0, 185.0, 192.0, 184.0, 192.0, 195.0, 188.0, 190.0, 198.0, 190.0, 190.0, 196.0, 197.0, 190.0, 195.0, 191.0, 184.0, 187.0, 195.0, 189.0, 196.0, 187.0, 193.0, 191.0, 194.0, 190.0, 189.0, 189.0, 190.0, 202.0, 205.0, 185.0, 186.0, 187.0, 208.0, 190.0, 196.0, 178.0, 192.0, 192.0, 203.0, 183.0, 190.0, 193.0, 184.0, 199.0, 190.0, 181.0, 197.0, 198.0, 191.0, 193.0, 197.0, 191.0, 196.0, 188.0, 199.0, 189.0, 189.0, 187.0, 198.0, 176.0, 202.0, 186.0, 199.0, 191.0, 195.0, 191.0, 210.0, 190.0, 197.0, 193.0, 199.0, 187.0, 190.0, 191.0, 200.0, 185.0, 193.0, 193.0, 187.0, 188.0, 190.0, 192.0, 185.0, 190.0, 184.0, 195.0, 193.0, 187.0, 201.0, 211.0, 230.0, 210.0, 218.0, 215.0, 210.0, 211.0, 219.0, 209.0, 215.0, 214.0, 216.0, 214.0, 213.0, 210.0, 217.0, 210.0, 221.0, 209.0, 222.0, 218.0, 215.0, 213.0, 215.0, 215.0, 215.0, 216.0, 215.0, 210.0, 220.0, 222.0, 209.0, 207.0, 230.0, 220.0, 220.0, 213.0, 219.0, 208.0, 208.0, 208.0, 225.0, 210.0, 216.0, 222.0, 217.0, 210.0, 225.0, 213.0, 215.0, 210.0, 220.0, 210.0, 225.0, 217.0, 220.0, 208.0, 220.0, 208.0, 224.0, 208.0, 221.0, 214.0, 231.0, 219.0, 230.0, 214.0, 229.0, 220.0, 223.0, 216.0, 221.0, 221.0, 217.0, 216.0, 230.0, 209.0, 220.0, 215.0, 223.0, 212.0, 221.0, 212.0, 224.0, 212.0, 228.0, 218.0, 218.0, 212.0, 230.0, 218.0, 228.0, 212.0, 224.0, 214.0, 226.0, 216.0, 222.0, 203.0, 225.0, 219.0, 228.0, 215.0, 228.0, 216.0, 215.0, 210.0, 219.0, 208.0, 209.0, 216.0, 229.0, 213.0, 230.0, 217.0, 230.0, 217.0, 222.0, 214.0, 215.0, 222.0, 212.0, 213.0, 192.0, 196.0, 193.0, 188.0, 197.0, 198.0, 178.0, 197.0, 195.0, 198.0, 193.0, 194.0, 185.0, 201.0, 190.0, 201.0, 197.0, 181.0, 190.0, 195.0, 181.0, 191.0, 187.0, 193.0, 195.0, 197.0, 200.0, 200.0, 191.0, 205.0, 187.0, 201.0, 187.0, 203.0, 195.0, 199.0, 195.0, 210.0, 192.0, 205.0, 210.0, 187.0, 196.0, 196.0, 196.0, 201.0, 190.0, 212.0, 187.0, 198.0, 199.0, 201.0, 193.0, 203.0, 187.0, 197.0, 191.0, 203.0, 202.0, 194.0, 206.0, 189.0, 195.0, 207.0, 202.0, 193.0, 210.0, 198.0]};
+
+const FEATS = ["bill_length_mm", "bill_depth_mm", "flipper_length_mm"];
+const FLAB = ["bill length (mm)", "bill depth (mm)", "flipper length (mm)"];
+const SPECIES = ["Adelie", "Chinstrap", "Gentoo"];
+const SCOL = { Adelie: "#ff8c00", Chinstrap: "#a034f0", Gentoo: "#159090" };
+
+const GD_ITERS = 1500, GD_LR = 0.5;      // gradient ascent on the mean log-likelihood
+
+// =====================================================================
+// Model: softmax fit by gradient ascent (K=2 reduces to the notes' binary case)
+// =====================================================================
+function subsetRows(K) {
+  const keep = K === 2 ? ["Adelie", "Chinstrap"] : SPECIES;
+  const idx = [];
+  RAW.species.forEach((s, i) => { if (keep.includes(s)) idx.push(i); });
+  return { idx, classes: keep };
+}
+
+function fitModel(dim, K) {
+  const { idx, classes } = subsetRows(K);
+  const n = idx.length;
+  // standardize the dim features over this subset
+  const mean = [], sd = [];
+  const Z = [];                            // Z[i][j]
+  for (let j = 0; j < dim; j++) {
+    const col = idx.map(i => RAW[FEATS[j]][i]);
+    const m = col.reduce((a, b) => a + b, 0) / n;
+    const v = col.reduce((a, b) => a + (b - m) * (b - m), 0) / (n - 1);
+    mean.push(m); sd.push(Math.sqrt(v));
+  }
+  for (let r = 0; r < n; r++) {
+    Z.push(FEATS.slice(0, dim).map((f, j) => (RAW[f][idx[r]] - mean[j]) / sd[j]));
+  }
+  const yk = idx.map(i => classes.indexOf(RAW.species[i]));
+
+  // gradient ascent, all classes (b[k] intercept, W[k][j] weights)
+  const b = new Array(K).fill(0);
+  const W = Array.from({ length: K }, () => new Array(dim).fill(0));
+  const s = new Array(K), pr = new Array(K);
+  for (let it = 0; it < GD_ITERS; it++) {
+    const gb = new Array(K).fill(0);
+    const gW = Array.from({ length: K }, () => new Array(dim).fill(0));
+    for (let r = 0; r < n; r++) {
+      let mx = -Infinity;
+      for (let k = 0; k < K; k++) {
+        s[k] = b[k];
+        for (let j = 0; j < dim; j++) s[k] += W[k][j] * Z[r][j];
+        if (s[k] > mx) mx = s[k];
+      }
+      let den = 0;
+      for (let k = 0; k < K; k++) { pr[k] = Math.exp(s[k] - mx); den += pr[k]; }
+      for (let k = 0; k < K; k++) {
+        const g = (yk[r] === k ? 1 : 0) - pr[k] / den;
+        gb[k] += g;
+        for (let j = 0; j < dim; j++) gW[k][j] += g * Z[r][j];
+      }
+    }
+    for (let k = 0; k < K; k++) {
+      b[k] += GD_LR * gb[k] / n;
+      for (let j = 0; j < dim; j++) W[k][j] += GD_LR * gW[k][j] / n;
+    }
+  }
+
+  // raw-unit scores: s_k(v) = b0k + sum_j wk_j * v_j  (unfold the standardization)
+  const rawW = W.map(row => row.map((w, j) => w / sd[j]));
+  const rawB = b.map((bk, k) => bk - W[k].reduce((a, w, j) => a + w * mean[j] / sd[j], 0));
+
+  const model = { dim, K, classes, idx, mean, sd, rawW, rawB };
+  model.scores = v => rawB.map((bk, k) => {
+    let sk = bk;
+    for (let j = 0; j < dim; j++) sk += rawW[k][j] * v[j];
+    return sk;
+  });
+  model.probs = v => {
+    const sc = model.scores(v), mx = Math.max(...sc);
+    const e = sc.map(x => Math.exp(x - mx)), den = e.reduce((a, x) => a + x, 0);
+    return e.map(x => x / den);
+  };
+  let correct = 0;
+  for (const i of idx) {
+    const pv = model.probs(FEATS.slice(0, dim).map(f => RAW[f][i]));
+    if (model.classes[pv.indexOf(Math.max(...pv))] === RAW.species[i]) correct++;
+  }
+  model.acc = correct / idx.length;
+  return model;
+}
+
+const cache = {};
+function getModel(dim, K) {
+  const key = dim + "-" + K;
+  if (!cache[key]) cache[key] = fitModel(dim, K);
+  return cache[key];
+}
+
+// =====================================================================
+// State & shared helpers
+// =====================================================================
+const state = { dim: 1, K: 2, cam: { yaw: 0.7, pitch: 0.45 } };
+const stage = document.getElementById("lb-stage");
+const svg = d3.select(stage.querySelector("svg"));
+const MAR = { l: 50, r: 16, t: 12, b: 44 };
+const fmt = v => v.toFixed(2);
+
+function extent(feat, idx, pad) {
+  let lo = Infinity, hi = -Infinity;
+  for (const i of idx) { const v = RAW[feat][i]; if (v < lo) lo = v; if (v > hi) hi = v; }
+  const p = (hi - lo) * pad;
+  return [lo - p, hi + p];
+}
+
+function clearStage() {
+  svg.selectAll("*").remove();
+  for (const el of stage.querySelectorAll(".axl, .axl-y, .axl3")) el.remove();
+  stage.classList.remove("threed");
+}
+
+function addLabel(cls, text, left, top, math) {
+  const sp = document.createElement("span");
+  sp.className = cls;
+  sp.style.left = left + "px"; sp.style.top = top + "px";
+  sp.textContent = text;
+  stage.appendChild(sp);
+  return sp;
+}
+
+// =====================================================================
+// 1D view: p_k(x) curves, data strips, boundary points
+// =====================================================================
+function render1D(model) {
+  const W = 640, H = 400; svg.attr("width", W).attr("height", H);
+  const cw = W - MAR.l - MAR.r, ch = H - MAR.t - MAR.b;
+  const g = svg.append("g").attr("transform", `translate(${MAR.l},${MAR.t})`);
+  const dom = extent(FEATS[0], model.idx, 0.06);
+  const xs = d3.scaleLinear().domain(dom).range([0, cw]);
+  const ys = d3.scaleLinear().domain([0, 1.3]).range([ch, 0]);
+
+  // argmax segments + boundary points on a fine grid
+  const NG = 600, bounds = [];
+  let prev = null;
+  const seg = [];                          // [x0, x1, class]
+  for (let i = 0; i <= NG; i++) {
+    const x = dom[0] + (dom[1] - dom[0]) * i / NG;
+    const pv = model.probs([x]);
+    const am = pv.indexOf(Math.max(...pv));
+    if (prev === null) { seg.push([x, x, am]); }
+    else if (am !== prev) { bounds.push(x); seg[seg.length - 1][1] = x; seg.push([x, x, am]); }
+    else seg[seg.length - 1][1] = x;
+    prev = am;
+  }
+  // region tint (only up to p = 1, where the curves live)
+  for (const [x0, x1, am] of seg) {
+    g.append("rect").attr("x", xs(x0)).attr("y", ys(1)).attr("width", xs(x1) - xs(x0))
+      .attr("height", ys(0) - ys(1)).attr("fill", SCOL[model.classes[am]]).attr("opacity", 0.10);
+  }
+  // probability curves
+  const grid = d3.range(NG + 1).map(i => dom[0] + (dom[1] - dom[0]) * i / NG);
+  model.classes.forEach((cls, k) => {
+    g.append("path")
+      .attr("d", d3.line().x(x => xs(x)).y(x => ys(model.probs([x])[k]))(grid))
+      .attr("fill", "none").attr("stroke", SCOL[cls]).attr("stroke-width", 2.4);
+  });
+  // p = 1/2 guide for the binary case
+  if (model.K === 2) {
+    g.append("line").attr("x1", 0).attr("x2", cw).attr("y1", ys(0.5)).attr("y2", ys(0.5))
+      .attr("stroke", "#999").attr("stroke-dasharray", "3,3");
+  }
+  // boundary verticals
+  for (const bx of bounds) {
+    g.append("line").attr("x1", xs(bx)).attr("x2", xs(bx)).attr("y1", ys(0)).attr("y2", ys(1.28))
+      .attr("stroke", "#333").attr("stroke-width", 2).attr("stroke-dasharray", "6,3");
+  }
+  // data strips above the curves (one row per class, jittered)
+  const rj = d3.randomLcg(413);
+  model.classes.forEach((cls, k) => {
+    const yb = 1.06 + 0.08 * k;
+    for (const i of model.idx) {
+      if (RAW.species[i] !== cls) continue;
+      g.append("circle").attr("cx", xs(RAW[FEATS[0]][i]))
+        .attr("cy", ys(yb + (rj() - 0.5) * 0.04)).attr("r", 2.6)
+        .attr("fill", SCOL[cls]).attr("opacity", 0.75);
+    }
+  });
+  // axes
+  g.append("g").attr("transform", `translate(0,${ch})`).call(d3.axisBottom(xs).ticks(7).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  g.append("g").call(d3.axisLeft(ys).tickValues([0, 0.25, 0.5, 0.75, 1]).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  addLabel("axl axl-x", FLAB[0], MAR.l + cw / 2, H - 16);
+  addLabel("axl axl-y", "probability", 4, MAR.t + ys(0.5));
+  return { bounds };
+}
+
+// =====================================================================
+// 2D view: soft region shading + boundary contour + scatter
+// =====================================================================
+function render2D(model) {
+  const W = 640, H = 460; svg.attr("width", W).attr("height", H);
+  const cw = W - MAR.l - MAR.r, ch = H - MAR.t - MAR.b;
+  const g = svg.append("g").attr("transform", `translate(${MAR.l},${MAR.t})`);
+  const dx = extent(FEATS[0], model.idx, 0.06), dy = extent(FEATS[1], model.idx, 0.06);
+  const xs = d3.scaleLinear().domain(dx).range([0, cw]);
+  const ys = d3.scaleLinear().domain(dy).range([ch, 0]);
+
+  // probability field on a grid
+  const G = 70, marg = new Array(G * G);
+  const gShade = g.append("g");
+  for (let r = 0; r < G; r++) {
+    const vy = dy[0] + (dy[1] - dy[0]) * (r + 0.5) / G;
+    for (let c = 0; c < G; c++) {
+      const vx = dx[0] + (dx[1] - dx[0]) * (c + 0.5) / G;
+      const pv = model.probs([vx, vy]);
+      const srt = [...pv].sort((a, b) => b - a);
+      const am = pv.indexOf(srt[0]);
+      marg[r * G + c] = srt[0] - srt[1];   // margin: 0 exactly on the boundary
+      gShade.append("rect")
+        .attr("x", (c / G) * cw).attr("y", ch - ((r + 1) / G) * ch)
+        .attr("width", cw / G + 0.5).attr("height", ch / G + 0.5)
+        .attr("fill", SCOL[model.classes[am]])
+        .attr("opacity", 0.30 * (srt[0] - 1 / model.K) / (1 - 1 / model.K));
+    }
+  }
+  // boundary = contour of the margin field near 0
+  const cont = d3.contours().size([G, G]).thresholds([0.02])(marg);
+  g.append("g")
+    .attr("transform", `scale(${cw / G},${-ch / G}) translate(0,${-G})`)
+    .selectAll("path").data(cont).join("path")
+    .attr("d", d3.geoPath())
+    .attr("fill", "none").attr("stroke", "#333").attr("stroke-width", 2 / (cw / G))
+    .attr("stroke-dasharray", `${6 / (cw / G)},${3 / (cw / G)}`);
+  // data
+  for (const i of model.idx) {
+    g.append("circle").attr("cx", xs(RAW[FEATS[0]][i])).attr("cy", ys(RAW[FEATS[1]][i]))
+      .attr("r", 3.4).attr("fill", SCOL[RAW.species[i]]).attr("stroke", "#fff").attr("stroke-width", 0.8);
+  }
+  // axes
+  g.append("g").attr("transform", `translate(0,${ch})`).call(d3.axisBottom(xs).ticks(7).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  g.append("g").call(d3.axisLeft(ys).ticks(6).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  addLabel("axl axl-x", FLAB[0], MAR.l + cw / 2, H - 16);
+  addLabel("axl axl-y", FLAB[1], 4, MAR.t + ch / 2);
+}
+
+// =====================================================================
+// 3D view: rotatable scatter + boundary plane(s) clipped to active regions
+// =====================================================================
+function planeCubePolygon(nrm, c) {        // {g : nrm . g = c} intersect [-1,1]^3
+  const pts = [];
+  const axes = [[1, 2, 0], [0, 2, 1], [0, 1, 2]];
+  for (const [a1, a2, af] of axes) {
+    for (const v1 of [-1, 1]) for (const v2 of [-1, 1]) {
+      if (Math.abs(nrm[af]) < 1e-12) continue;
+      const t = (c - nrm[a1] * v1 - nrm[a2] * v2) / nrm[af];
+      if (t >= -1 - 1e-9 && t <= 1 + 1e-9) {
+        const pt = [0, 0, 0];
+        pt[a1] = v1; pt[a2] = v2; pt[af] = Math.max(-1, Math.min(1, t));
+        if (!pts.some(q => Math.hypot(q[0] - pt[0], q[1] - pt[1], q[2] - pt[2]) < 1e-6)) pts.push(pt);
+      }
+    }
+  }
+  if (pts.length < 3) return null;
+  // order the vertices around their centroid in the plane's own basis
+  const nn = Math.hypot(...nrm), u = [];
+  const ref = Math.abs(nrm[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+  const e1 = cross(nrm, ref), e2 = cross(nrm, e1);
+  const cen = [0, 1, 2].map(j => pts.reduce((a, p2) => a + p2[j], 0) / pts.length);
+  pts.sort((p2, q) => angleIn(p2, cen, e1, e2) - angleIn(q, cen, e1, e2));
+  return pts;
+  function cross(a, b2) { return [a[1] * b2[2] - a[2] * b2[1], a[2] * b2[0] - a[0] * b2[2], a[0] * b2[1] - a[1] * b2[0]]; }
+  function angleIn(p2, c2, ea, eb) {
+    const d = [p2[0] - c2[0], p2[1] - c2[1], p2[2] - c2[2]];
+    return Math.atan2(d[0] * eb[0] + d[1] * eb[1] + d[2] * eb[2], d[0] * ea[0] + d[1] * ea[1] + d[2] * ea[2]);
+  }
+}
+
+function clipPolygon(poly, nrm, d) {       // keep {g : nrm . g >= d}  (Sutherland-Hodgman)
+  if (!poly) return null;
+  const out = [];
+  const val = p2 => nrm[0] * p2[0] + nrm[1] * p2[1] + nrm[2] * p2[2] - d;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b2 = poly[(i + 1) % poly.length];
+    const va = val(a), vb = val(b2);
+    if (va >= 0) out.push(a);
+    if ((va >= 0) !== (vb >= 0)) {
+      const t = va / (va - vb);
+      out.push([0, 1, 2].map(j => a[j] + t * (b2[j] - a[j])));
+    }
+  }
+  return out.length >= 3 ? out : null;
+}
+
+function render3D(model) {
+  const W = 620, H = 500; svg.attr("width", W).attr("height", H);
+  stage.classList.add("threed");
+  const doms = FEATS.map(f => extent(f, model.idx, 0.05));
+  const cen = doms.map(d => (d[0] + d[1]) / 2), half = doms.map(d => (d[1] - d[0]) / 2);
+  const toCube = v => v.map((x, j) => (x - cen[j]) / half[j]);
+  // scores expressed in cube coordinates: s_k(g) = b'_k + w'_k . g
+  const wC = model.rawW.map(row => row.map((w, j) => w * half[j]));
+  const bC = model.rawB.map((bk, k) => bk + model.rawW[k].reduce((a, w, j) => a + w * cen[j], 0));
+
+  // boundary polygons: pairwise ties clipped to where those two classes are on top
+  const polys = [];
+  for (let i = 0; i < model.K; i++) for (let j = i + 1; j < model.K; j++) {
+    const nrm = [0, 1, 2].map(t => wC[i][t] - wC[j][t]);
+    let poly = planeCubePolygon(nrm, -(bC[i] - bC[j]));
+    for (let k = 0; k < model.K; k++) {
+      if (k === i || k === j) continue;
+      poly = clipPolygon(poly, [0, 1, 2].map(t => wC[i][t] - wC[k][t]), -(bC[i] - bC[k]));
+    }
+    if (poly) polys.push({ poly, pair: [model.classes[i], model.classes[j]] });
+  }
+  window.__lbPolys = { polys, wC, bC };     // exposed for the headless drive
+
+  const gEdges = svg.append("g"), gPoly = svg.append("g"), gPts = svg.append("g");
+  const labels = FEATS.map((f, j) => addLabel("axl3", FLAB[j], 0, 0));
+
+  const pts = model.idx.map(i => ({
+    g: toCube(FEATS.map(f => RAW[f][i])), cls: RAW.species[i],
+  }));
+
+  function proj(gp, cam) {
+    const c = Math.cos(cam.yaw), s = Math.sin(cam.yaw);
+    const sp = Math.sin(cam.pitch), cp = Math.cos(cam.pitch);
+    const u = gp[0] * c - gp[1] * s, v = gp[0] * s + gp[1] * c, z = gp[2];
+    const k = W * 0.30, cx = W / 2, cy = H * 0.52;
+    return [cx + k * u, cy - k * (v * sp + z * cp), v * cp - z * sp];
+  }
+
+  function draw() {
+    const cam = state.cam;
+    gEdges.selectAll("*").remove();
+    const C = [-1, 1];
+    for (const a of C) for (const b2 of C) for (const ax of [0, 1, 2]) {
+      const p1 = [0, 0, 0], p2 = [0, 0, 0];
+      const others = [0, 1, 2].filter(t => t !== ax);
+      p1[others[0]] = a; p1[others[1]] = b2; p2[others[0]] = a; p2[others[1]] = b2;
+      p1[ax] = -1; p2[ax] = 1;
+      const q1 = proj(p1, cam), q2 = proj(p2, cam);
+      gEdges.append("line").attr("x1", q1[0]).attr("y1", q1[1]).attr("x2", q2[0]).attr("y2", q2[1])
+        .attr("stroke", "#ddd");
+    }
+    // axis labels at positive ends
+    [[1.25, 0, -1], [0, 1.25, -1], [0, 0, 1.2]].forEach((pos, j) => {
+      const q = proj([j === 0 ? 1.25 : 0, j === 1 ? 1.25 : 0, j === 2 ? 1.2 : -1], cam);
+      labels[j].style.left = q[0] + "px"; labels[j].style.top = q[1] + "px";
+    });
+    // boundary polygons, farthest first
+    const pp = polys.map(P => {
+      const proj2 = P.poly.map(v => proj(v, cam));
+      return { proj2, depth: proj2.reduce((a, q) => a + q[2], 0) / proj2.length };
+    }).sort((a, b2) => b2.depth - a.depth);
+    gPoly.selectAll("*").remove();
+    for (const P of pp) {
+      gPoly.append("path")
+        .attr("d", "M" + P.proj2.map(q => `${q[0].toFixed(1)},${q[1].toFixed(1)}`).join("L") + "Z")
+        .attr("fill", "#607d8b").attr("fill-opacity", 0.30)
+        .attr("stroke", "#455a64").attr("stroke-width", 1.2);
+    }
+    // points, farthest first
+    const pj = pts.map(pt => ({ ...pt, q: proj(pt.g, cam) })).sort((a, b2) => b2.q[2] - a.q[2]);
+    gPts.selectAll("circle").data(pj).join("circle")
+      .attr("cx", d => d.q[0]).attr("cy", d => d.q[1]).attr("r", 3.4)
+      .attr("fill", d => SCOL[d.cls]).attr("stroke", "#fff").attr("stroke-width", 0.8);
+  }
+  draw();
+
+  let raf = false;
+  svg.call(d3.drag().on("drag", ev => {
+    state.cam.yaw += ev.dx * 0.008;
+    state.cam.pitch = Math.max(0.1, Math.min(1.4, state.cam.pitch + ev.dy * 0.008));
+    if (!raf) { raf = true; requestAnimationFrame(() => { raf = false; draw(); }); }
+  }));
+}
+
+// =====================================================================
+// Captions, readout, legend
+// =====================================================================
+function renderMeta(model, extra) {
+  const shape = { 1: "a point", 2: "a line", 3: "a plane" }[model.dim];
+  const pieces = model.K === 2 ? "" :
+    " With 3 classes the boundaries are pieces of pairwise ties meeting at a triple point" +
+    (model.dim === 3 ? " line" : "") + ".";
+  document.getElementById("lb-cap").innerHTML =
+    `In ${model.dim}D the decision boundary is <b>${shape}</b> &mdash; always linear.${pieces}` +
+    ` &nbsp;Training accuracy: <b>${(model.acc * 100).toFixed(1)}%</b> (n = ${model.idx.length}).`;
+  const rows = model.K === 2
+    ? [`boundary: ${fmt(model.rawB[0] - model.rawB[1])} ` +
+       model.rawW[0].map((w, j) => `${(w - model.rawW[1][j]) >= 0 ? "+" : "−"} ${fmt(Math.abs(w - model.rawW[1][j]))}·${FEATS[j].replace("_mm", "")}`).join(" ") + " = 0"]
+    : model.classes.map((cls, k) =>
+        `<span style="color:${SCOL[cls]}">s(${cls}) = ${fmt(model.rawB[k])} ` +
+        model.rawW[k].map((w, j) => `${w >= 0 ? "+" : "−"} ${fmt(Math.abs(w))}·${FEATS[j].replace("_mm", "")}`).join(" ") + "</span>");
+  document.getElementById("lb-fit").innerHTML =
+    `Fitted by ${GD_ITERS} gradient-ascent steps (raw units): ` + rows.join("<br>");
+}
+
+function renderLegend(model) {
+  document.getElementById("lb-legend").innerHTML = model.classes.map(cls =>
+    `<span class="sw" style="background:${SCOL[cls]}"></span>${cls}`).join("") +
+    `<span style="color:#888; margin-left:14px">dashed dark ${state.dim === 3 ? "planes" : "marks"} = decision boundary</span>`;
+}
+
+// =====================================================================
+// Wiring
+// =====================================================================
+function renderAll() {
+  const model = getModel(state.dim, state.K);
+  clearStage();
+  if (state.dim === 1) render1D(model);
+  else if (state.dim === 2) render2D(model);
+  else render3D(model);
+  renderMeta(model);
+  renderLegend(model);
+  document.body.dataset.k = state.K;
+}
+
+function main() {
+  if (main.done) return;                   // jsdom fires load twice
+  main.done = true;
+  for (const r of document.querySelectorAll('input[name="lb-dim"]')) {
+    r.addEventListener("change", () => { if (r.checked) { state.dim = +r.value; renderAll(); } });
+  }
+  for (const r of document.querySelectorAll('input[name="lb-k"]')) {
+    r.addEventListener("change", () => { if (r.checked) { state.K = +r.value; renderAll(); } });
+  }
+  renderAll();
+
+  window.__lbApi = {
+    setDim: d => { state.dim = d; document.querySelector(`input[name="lb-dim"][value="${d}"]`).checked = true; renderAll(); },
+    setK: k => { state.K = k; document.querySelector(`input[name="lb-k"][value="${k}"]`).checked = true; renderAll(); },
+    setCam: (yaw, pitch) => { state.cam.yaw = yaw; state.cam.pitch = pitch; renderAll(); },
+    getModel, state, RAW, FEATS,
+  };
+}
+window.addEventListener("load", main);
+</script>
+
+<!--
+  HOW THE FIT WORKS (matches the course notes)
+  - p(x) = e^(b0+b.x)/(1+e^(b0+b.x)) for 2 classes; softmax p_k = e^(s_k)/sum e^(s_j)
+    for 3 (with s_k = b0k + bk.x, the pairwise log-odds are again linear).
+  - Parameters maximize the log-likelihood by GRADIENT ASCENT with the update
+    G = sum_i x_i (y_i - p(x_i))  (per class, softmax case: y_i -> 1[y_i = k]),
+    1500 steps of size 0.5 on the mean gradient, features standardized for the
+    optimization and the fit unfolded back to raw units for display.
+  - Decision boundary: argmax_k p_k(x) changes <=> the top two scores tie <=>
+    a LINEAR equation -> a point (1D), a line (2D), a plane (3D). With K=3 the
+    three pairwise tie-planes are each clipped to the region where their two
+    classes actually hold the top-2 (Sutherland-Hodgman against the third
+    class's half-space); they meet along the triple line s_1 = s_2 = s_3.
+  - Note: some penguin class pairs are nearly separable, so the unpenalized
+    MLE keeps growing slowly with more iterations; the BOUNDARY it defines is
+    stable, which is what this applet shows. Fixed iteration count keeps the
+    page deterministic.
+
+  SOURCES (kept in source; not displayed in the applet UI)
+  - Data: Palmer penguins (Horst, Hill & Gorman 2020, palmerpenguins R package,
+    CC-0), fetched from the package repository and saved to datasets/penguins.csv;
+    NA rows dropped (n = 342).
+  - Logistic regression & boundaries: course notes (this page follows their
+    notation and gradient-ascent derivation); ISLR ch. 4.3-4.4.
+-->
+</body>
+</html>

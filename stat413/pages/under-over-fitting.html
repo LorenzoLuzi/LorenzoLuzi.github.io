@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Underfitting, Good Fit, Overfitting</title>
+  <link rel="stylesheet" href="../styling/global.css">
+
+  <!--
+    SOURCES (kept in source; not displayed in the applet UI)
+    - Data: the same 88 runs as polynomial-regression.html and kfold-cv.html - Brinkman (1981),
+      "Ethanol Fuel - A Single-Cylinder Engine Study of Efficiency and Exhaust Emissions", SAE
+      Technical Paper 810345, via R's lattice package (datasets/ethanol.csv). x = (E - mean E)/sd E,
+      y = NOx - mean NOx.
+    - Split: the runs are sorted by x and dealt alternately - even ranks (starting with the
+      smallest x) train, odd ranks validate; 44/44. Deterministic on purpose: with a RANDOM split
+      the validation loss at high degree depends on whether the extreme-x runs are in training
+      (fit wiggles, loss ~0.2) or in validation (fit extrapolates, loss 1e2..1e7), so the three
+      regimes would sometimes look wrong. Interleaving makes validation measure interpolation.
+    - Fits are computed by "Vandermonde with Arnoldi" (Brubeck, Nakatsukasa & Trefethen, SIAM Review
+      2021): an orthonormal polynomial basis on the training x's, built by Gram-Schmidt on x*q_k. Same
+      polynomial as regressing on 1, x, ..., x^d, but accurate to degree n_train-1 = 43 (monomials fail
+      past ~15, a Chebyshev basis past ~38). Checked against an 80-digit mpmath solve: every training and
+      validation loss agrees to a relative 1e-11 or better; training loss at degree 43 is 0 in both.
+    - Reference numbers (80-digit mpmath, this split, degrees 1..43; degree 44 repeats 43):
+      training : 1.268 .2945 .2878 .1194 .1107 .08837 .08541 .08186 .08014 .08014 .07801 .06982 .06308
+                 .04276 .0372 .0372 .03503 .03246 .03243 .03234 .03049 .03038 .02974 .02968 .02749 .0266
+                 .02517 .02401 .02377 .02202 .02039 .016 .01565 .01559 .01536 .01533 .01445 .01301 .0129
+                 .01217 .0117 2.564e-4 0  (never increases; exactly 0 at degree 43 = interpolation)
+      validation: 1.246 .2695 .2718 .1391 .1285 .1233 .119 .1212 .1201 .12 .1194 .12 .1243 .1396 .1744
+                 .1737 .3073 .7064 .6427 .4938 .2094 .1638 3.773 13.68 1013 259.1 2.153e4 1.893e5 1.832e4
+                 6.565e6 8.993e7 3.380e9 1.010e10 4.177e9 1.602e10 1.593e11 1.581e13 1.322e15 1.028e14
+                 2.613e17 4.782e19 6.318e22 3.035e22
+      validation minimum .119 at degree 7; "good" band = within 25% of it -> degrees 4..14;
+      underfitting 1..3, overfitting 15..44. With 44 training runs the degree-43 polynomial (44
+      coefficients counting the intercept) interpolates them; degree 44 has nothing left to fit and the
+      applet shows the same curve (the least-squares problem is then underdetermined).
+    - The loss axis is FIXED at 0..1 (DS.lossCap): losses above it are off the chart, drawn as an arrow
+      at the top edge; curves are clipped geometrically (exact crossing points), never by dropping samples.
+    - Regime rule (a modeling convention, not a theorem): good fit = validation loss within 25% of
+      its minimum; below that band's degrees = underfitting; above = overfitting.
+  -->
+
+  <!-- applet-SPECIFIC styles only -->
+  <style>
+    body { font-family: system-ui, -apple-system, Arial, sans-serif; margin: 24px; color: #222; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    .lead { color: #555; max-width: 92ch; line-height: 1.5; margin-top: 4px; font-size: 16px; }
+
+    #banner { text-align: center; margin: 16px auto 4px; max-width: 900px; }
+    #regime { font-size: 26px; font-weight: 700; letter-spacing: 0.5px; min-height: 34px; }
+    #why { font-size: 15.5px; color: #333; min-height: calc(2 * 1.5em); margin-top: 4px; line-height: 1.5; }   /* two lines reserved: no jump */
+    #defs { text-align: center; font-size: 14.5px; color: #555; margin: 8px 0 10px; min-height: 22px; }
+
+    .controls { display: flex; flex-wrap: wrap; gap: 10px 30px; justify-content: center; align-items: center;
+                font-size: 15px; margin: 2px 0 12px; }
+    .controls input[type=range] { vertical-align: middle; width: 260px; }
+    .clabel { color: #555; margin-right: 6px; }
+    #dlab { display: inline-block; min-width: 2.2em; font-variant-numeric: tabular-nums; }
+    .btn { padding: 6px 12px; font-size: 14px; margin: 0 3px; cursor: pointer; background: #f0f0f0;
+           border: 1px solid #bbb; border-radius: 6px; }
+    .btn:hover { background: #e6e6e6; }
+
+    .wrap { display: flex; flex-wrap: wrap; gap: 26px; align-items: flex-start; justify-content: center; margin-top: 4px; }
+    .panel { width: 470px; }
+    .panel h3 { font-size: 15px; font-weight: bold; margin: 0 0 4px; text-align: center; }
+    /* readouts are always two lines tall (the text is one or two lines depending on the degree), so the plots never jump */
+    .read { text-align: center; font-size: 13.5px; color: #444; min-height: calc(2 * 1.45em); font-variant-numeric: tabular-nums; line-height: 1.45; }
+    .xlab { text-align: center; font-size: 14px; margin-top: -2px; min-height: 22px; color: #333; }
+    .legend { text-align: center; font-size: 13px; color: #777; margin-top: 4px; line-height: 1.6; }
+    .sw { display: inline-block; width: 18px; height: 0; border-top: 3px solid #222; vertical-align: middle; margin: 0 3px 0 6px; }
+    .sw.dash { border-top-style: dashed; border-color: #999; }
+    .sw.ring { width: 10px; height: 10px; border: 2px solid #009E73; border-radius: 50%; }            /* = .minring (REG.good.color) */
+    .sw.tri { width: 0; height: 0; border: none; border-left: 6px solid transparent; border-right: 6px solid transparent;
+              border-bottom: 10px solid #D55E00; }                                                    /* = path.offchart, recolored live */
+    .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #7a8ea3; vertical-align: middle; margin: 0 3px 0 6px; }
+    .dot.hollow { background: #fff; border: 1.6px solid #222; }
+    .axis text { font-size: 11px; }
+    svg { overflow: visible; }
+
+    #foot { background: #f6f6f8; border: 1px solid #e0e0e6; border-radius: 6px; padding: 10px 14px;
+            font-size: 15px; max-width: 980px; margin: 24px auto 0; line-height: 1.8; color: #333; }
+  </style>
+
+  <!-- MathJax v3 (config BEFORE the library). Full bundle, no runtime loads. -->
+  <script>
+    window.MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], packages: { '[+]': ['color'] } },
+      chtml: { matchFontHeight: false, scale: 1.1 }
+    };
+  </script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js"></script>
+  <script src="https://d3js.org/d3.v7.js"></script>
+
+  <script>
+  // ---- DATA (swap here) -----------------------------------------------------
+  // Brinkman's ethanol engine runs, "E,NOx" per row: the same block as the two companion applets.
+  const DS = {
+    xScale: 'sd',
+    yAxis: 'NOx, centered (µg/J)',
+    maxDeg: 44,                                  // degree slider 1..maxDeg (44 = the number of training runs)
+    deg0: 1,                                     // opens on the plain line
+    goodBand: 0.25,                              // "good fit" = validation loss within 25% of its minimum
+    lossCap: 1,                                  // the loss axis is fixed at 0..lossCap; larger losses are off the chart
+    curveSamples: 4000,                          // points used to draw the fitted polynomial
+    raw: '0.907,3.741;0.761,2.295;1.108,1.498;1.016,2.881;1.189,0.76;1.001,3.12;1.231,0.638;1.123,1.17;1.042,2.358;1.215,0.606;0.93,3.669;1.152,1;1.138,0.981;0.601,1.192;0.696,0.926;0.686,1.59;1.072,1.806;1.074,1.962;0.934,4.028;0.808,3.148;1.071,1.836;1.009,2.845;1.142,1.013;1.229,0.414;1.175,0.812;0.568,0.374;0.977,3.623;0.767,1.869;1.006,2.836;0.893,3.567;1.152,0.866;0.693,1.369;1.232,0.542;1.036,2.739;1.125,1.2;1.081,1.719;0.868,3.423;0.762,1.634;1.144,1.021;1.045,2.157;0.797,3.361;1.115,1.39;1.07,1.947;1.219,0.962;0.637,0.571;0.733,2.219;0.715,1.419;0.872,3.519;0.765,1.732;0.878,3.206;0.811,2.471;0.676,1.777;1.045,2.571;0.968,3.952;0.846,3.931;0.684,1.587;0.729,1.397;0.911,3.536;0.808,2.202;1.168,0.756;0.749,1.62;0.892,3.656;1.002,2.964;0.812,3.76;1.23,0.672;0.804,3.677;0.813,3.517;1.002,3.29;0.696,1.139;1.199,0.727;1.03,2.581;0.602,0.923;0.694,1.527;0.816,3.388;1.037,2.085;1.181,0.966;0.899,3.488;1.227,0.754;1.18,0.797;0.795,2.064;0.99,3.732;1.201,0.586;0.629,0.561;0.608,0.563;0.584,0.678;0.562,0.37;0.535,0.53;0.655,1.9'
+  };
+  // ---------------------------------------------------------------------------
+
+  const ROWS = DS.raw.split(';').map(s => s.split(',').map(Number));
+  const N = ROWS.length;
+  const E0 = ROWS.map(r => r[0]), Y0 = ROWS.map(r => r[1]);
+  const XBAR = d3.mean(E0), XSD = Math.sqrt(d3.mean(E0, v => (v - XBAR) ** 2)), YBAR = d3.mean(Y0);
+  const XS = DS.xScale === 'sd' ? XSD : (+DS.xScale || 1);
+  const X0 = E0.map(v => (v - XBAR) / XS);
+  const Y = Y0.map(v => v - YBAR);
+  const DEGS = d3.range(1, DS.maxDeg + 1);
+
+  // interleaved split: sort by x (ties by row order), even ranks train, odd ranks validate
+  const ORDER = d3.range(N).sort((a, b) => X0[a] - X0[b] || a - b);
+  const TRAIN = ORDER.filter((_, r) => r % 2 === 0), VAL = ORDER.filter((_, r) => r % 2 === 1);
+
+  const W = 470, H = 320, m = { t: 30, r: 14, b: 34, l: 52 };
+  const REG = { under: { name: 'UNDERFITTING', color: '#0072B2', tint: 'rgba(0,114,178,0.10)' },
+                good:  { name: 'GOOD FIT',     color: '#009E73', tint: 'rgba(0,158,115,0.12)' },
+                over:  { name: 'OVERFITTING',  color: '#D55E00', tint: 'rgba(213,94,0,0.10)' } };
+  const TRC = '#7a8ea3', VALC = '#222', TRAINLINE = '#999';
+  const f3 = v => d3.format('.3f')(v).replace('−', '-');
+  // losses run from exactly 0 (interpolation) to 1e22: "0" below 1e-12, scientific below 0.01, 3 dp below 10,
+  // thousands separators below 1e5, scientific above
+  const fl = v => (v < 0 ? '-' + fl(-v) : v < 1e-12 ? '0' : v < 0.01 ? d3.format('.2e')(v) : v < 10 ? f3(v) : v < 1e5 ? d3.format(',.1f')(v) : d3.format('.2e')(v));
+  const CAP = DS.lossCap;
+
+  // ---- the fits: "Vandermonde with Arnoldi" (Brubeck, Nakatsukasa & Trefethen 2021) ----------------------
+  // Gram-Schmidt on 1, x*q_0, x*q_1, ... over the TRAINING x's gives polynomials q_0 (constant), q_1, ..., q_43
+  // that are orthonormal on the training runs. The degree-d least-squares polynomial is the projection of y on
+  // q_0..q_d: the same curve as regressing on 1, x, x^2, ..., x^d (same column space), but computed accurately
+  // all the way to degree n_train - 1 = 43, where the monomial columns (past ~15) and even a Chebyshev basis
+  // (past ~38) break down. q_0 = constant is the intercept, i.e. the fit is centered on the training runs.
+  const NT = TRAIN.length, DMAX = NT - 1;
+  const XT = TRAIN.map(i => X0[i]), YT = TRAIN.map(i => Y[i]);
+  const Q = [XT.map(() => 1)], HM = [];               // Q[k][i] = q_k(x_i); HM[k] = the recurrence coefficients of q_{k+1}
+  for (let k = 0; k < DMAX; k++) {
+    const q = XT.map((x, i) => x * Q[k][i]), h = new Array(k + 2).fill(0);
+    for (let pass = 0; pass < 2; pass++)              // Gram-Schmidt twice: keeps the basis orthogonal to ~1e-15
+      for (let j = 0; j <= k; j++) {
+        const r = d3.sum(q, (v, i) => v * Q[j][i]) / NT; h[j] += r;
+        for (let i = 0; i < NT; i++) q[i] -= r * Q[j][i];
+      }
+    h[k + 1] = Math.sqrt(d3.sum(q, v => v * v) / NT);
+    Q.push(q.map(v => v / h[k + 1])); HM.push(h);
+  }
+  const COEF = Q.map(qk => d3.sum(qk, (v, i) => v * YT[i]) / NT);   // c_k = <y, q_k>: the degree-d fit uses c_0..c_d
+  function evalFit(x, d) {                            // sum_{k<=d} c_k q_k(x), q_k(x) by the same recurrence
+    const w = [1]; let s = COEF[0];
+    for (let k = 0; k < d; k++) {
+      let v = x * w[k]; const h = HM[k];
+      for (let j = 0; j <= k; j++) v -= h[j] * w[j];
+      w.push(v / h[k + 1]); s += COEF[k + 1] * w[k + 1];
+    }
+    return s;
+  }
+  // degree-d polynomial fitted to the TRAINING runs only. Degree 43 already interpolates the 44 training runs; a
+  // higher degree has more coefficients than runs and nothing left to fit, so it is the same curve (the
+  // minimum-norm least-squares solution).
+  function fitDeg(d) { const de = Math.min(d, DMAX); return x => evalFit(x, de); }
+  const loss = (idx, f) => d3.mean(idx, i => (Y[i] - f(X0[i])) ** 2);
+  // training loss straight from the orthonormal basis values on the training runs (the fitted values there are
+  // sum_{k<=d} c_k Q[k][i]); re-running the recurrence at the runs would add ~1e-3 of rounding at degree 43, where
+  // the true residual is exactly 0
+  const trainLoss = d => d3.mean(TRAIN, (_, i) => (YT[i] - d3.sum(d3.range(Math.min(d, DMAX) + 1), k => COEF[k] * Q[k][i])) ** 2);
+  const TAB = DEGS.map(d => { const f = fitDeg(d); return { d, dEff: Math.min(d, DMAX), f, train: trainLoss(d), val: loss(VAL, f) }; });
+
+  // polyline clipped to lo <= y <= hi with the crossing points computed exactly, so a curve runs right up to the
+  // edge of the plot instead of stopping at its last in-range sample (which is what leaves visible breaks)
+  function clipPieces(pts, lo, hi) {
+    const inside = y => y >= lo && y <= hi;
+    const cross = (a, b, yc) => [a[0] + (b[0] - a[0]) * (yc - a[1]) / (b[1] - a[1]), yc];
+    const pieces = []; let cur = inside(pts[0][1]) ? [pts[0]] : [];
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i], ia = inside(a[1]), ib = inside(b[1]);
+      if (ia && ib) cur.push(b);
+      else if (ia) { cur.push(cross(a, b, b[1] > hi ? hi : lo)); pieces.push(cur); cur = []; }
+      else if (ib) cur = [cross(a, b, a[1] > hi ? hi : lo), b];
+      else if ((a[1] > hi && b[1] < lo) || (a[1] < lo && b[1] > hi))            // straight through the band
+        pieces.push(a[1] > hi ? [cross(a, b, hi), cross(a, b, lo)] : [cross(a, b, lo), cross(a, b, hi)]);
+    }
+    if (cur.length) pieces.push(cur);
+    return pieces;
+  }
+  const BEST = TAB.reduce((a, t) => (t.val < a.val ? t : a), TAB[0]);
+  const BAND = BEST.val * (1 + DS.goodBand);
+  // the good region is the contiguous run of degrees around the minimum whose validation loss is inside the band
+  let gLo = BEST.d, gHi = BEST.d;
+  while (gLo > 1 && TAB[gLo - 2].val <= BAND) gLo--;
+  while (gHi < DS.maxDeg && TAB[gHi].val <= BAND) gHi++;
+  const regimeOf = d => (d < gLo ? 'under' : d > gHi ? 'over' : 'good');
+
+  function mjRun(els) {
+    const go = () => {
+      const live = (els || []).filter(e => e && e.isConnected);
+      if (!live.length || !window.MathJax || !MathJax.typesetPromise) return null;
+      if (MathJax.typesetClear) MathJax.typesetClear();
+      return MathJax.typesetPromise(live).catch(() => {});
+    };
+    window.__mjChain = (window.__mjChain || Promise.resolve()).then(() => {
+      if (window.MathJax && MathJax.typesetPromise) return go();
+      return new Promise(r => setTimeout(r, 150)).then(go);
+    });
+    return window.__mjChain;
+  }
+
+  function main() {
+    if (main.done) return; main.done = true;
+    const state = { d: DS.deg0 };
+
+    // ---- definitions (static) --------------------------------------------------
+    //document.getElementById('defs').innerHTML = 
+      // `\\( \\text{training loss} = \\frac{1}{${TRAIN.length}}\\sum_{i\\in\\text{train}}\\big(\\text{NOx}_i - \\hat f_d(x_i)\\big)^2, \\qquad ` +
+      // `\\text{validation loss} = \\frac{1}{${VAL.length}}\\sum_{i\\in\\text{validation}}\\big(\\text{NOx}_i - \\hat f_d(x_i)\\big)^2 \\)` +
+      // `<br>\\(\\hat f_d\\): the degree-\\(d\\) polynomial fitted to the training runs only.`;
+
+    // ---- controls ---------------------------------------------------------------
+    const dsl = document.getElementById('dslider');
+    dsl.min = 1; dsl.max = DS.maxDeg; dsl.step = 1; dsl.value = state.d;
+    dsl.addEventListener('input', () => { state.d = Math.max(1, Math.min(DS.maxDeg, Math.round(+dsl.value) || 1)); render(); });
+    const setDeg = d => { state.d = d; dsl.value = d; render(); };
+    const bU = document.getElementById('bunder'), bG = document.getElementById('bgood'), bO = document.getElementById('bover');
+    bU.textContent = `underfit (degree 1)`; bG.textContent = `good fit (degree ${BEST.d})`; bO.textContent = `overfit (degree ${DS.maxDeg})`;
+    bU.onclick = () => setDeg(1); bG.onclick = () => setDeg(BEST.d); bO.onclick = () => setDeg(DS.maxDeg);
+
+    // ---- panel 1: the fit ---------------------------------------------------------
+    const pad = 0.06 * (d3.max(Y) - d3.min(Y));
+    const x1 = d3.scaleLinear().domain(d3.extent(X0)).nice().range([m.l, W - m.r]);
+    const y1 = d3.scaleLinear().domain([d3.min(Y) - pad, d3.max(Y) + pad]).nice().range([H - m.b, m.t]);
+    const svg1 = d3.select('#p1').append('svg').attr('width', W).attr('height', H);
+    svg1.append('clipPath').attr('id', 'clip1').append('rect').attr('x', m.l).attr('y', m.t).attr('width', W - m.l - m.r).attr('height', H - m.t - m.b);
+    svg1.append('g').attr('class', 'axis').attr('transform', `translate(0,${H - m.b})`).call(d3.axisBottom(x1).ticks(7));
+    svg1.append('g').attr('class', 'axis').attr('transform', `translate(${m.l},0)`).call(d3.axisLeft(y1).ticks(6));
+    svg1.append('text').attr('transform', `translate(13,${(m.t + H - m.b) / 2}) rotate(-90)`).attr('text-anchor', 'middle')
+      .attr('font-size', 12).attr('fill', '#333').text(DS.yAxis);
+    const g1 = svg1.append('g').attr('clip-path', 'url(#clip1)');
+    g1.append('g').attr('class', 'train').selectAll('circle').data(TRAIN).join('circle')
+      .attr('cx', i => x1(X0[i])).attr('cy', i => y1(Y[i])).attr('r', 3.2).attr('fill', TRC).attr('opacity', 0.85);
+    g1.append('g').attr('class', 'val').selectAll('circle').data(VAL).join('circle')
+      .attr('cx', i => x1(X0[i])).attr('cy', i => y1(Y[i])).attr('r', 3.4).attr('fill', '#fff').attr('stroke', VALC).attr('stroke-width', 1.5);
+    const curve = g1.append('path').attr('class', 'curve').attr('fill', 'none').attr('stroke-width', 3);
+    const NS = DS.curveSamples, [xlo, xhi] = d3.extent(X0);
+    const xs = d3.range(NS).map(i => xlo + (xhi - xlo) * i / (NS - 1));         // dense: high degrees spike between runs
+    const lineP1 = d3.line().x(p => x1(p[0])).y(p => y1(p[1]));
+
+    // ---- panel 2: loss vs degree ------------------------------------------------
+    const x2 = d3.scaleLinear().domain([1, DS.maxDeg]).range([m.l, W - m.r]);
+    const y2 = d3.scaleLinear().domain([0, CAP]).range([H - m.b, m.t]);         // FIXED at 0..lossCap: larger losses are off the chart
+    const lineP2 = d3.line().x(p => x2(p[0])).y(p => y2(p[1]));
+    const clip2 = pts => clipPieces(pts, 0, CAP).map(lineP2).join('');
+    const svg2 = d3.select('#p2').append('svg').attr('width', W).attr('height', H);
+    const regions = [['under', 1, gLo - 1], ['good', gLo, gHi], ['over', gHi + 1, DS.maxDeg]].filter(r => r[2] >= r[1]);
+    const step2 = (x2(2) - x2(1)) / 2;
+    const gReg = svg2.append('g').attr('class', 'regions');
+    regions.forEach(([r, a, b]) => {
+      const xa = Math.max(m.l, x2(a) - step2), xb = Math.min(W - m.r, x2(b) + step2);
+      gReg.append('rect').attr('class', 'region ' + r).attr('x', xa).attr('y', m.t).attr('width', xb - xa).attr('height', H - m.t - m.b).attr('fill', REG[r].tint);
+      // label in the margin band above the plot, never inside it; a label wider than its region (the underfitting
+      // band is only 3 of 44 degrees) moves up to a second row and starts at the region's left edge so it cannot collide
+      const lab = svg2.append('text').attr('class', 'reglab').attr('x', (xa + xb) / 2).attr('y', m.t - 10).attr('text-anchor', 'middle')
+        .attr('font-size', 12).attr('font-weight', 700).attr('fill', REG[r].color).text(REG[r].name.toLowerCase());
+      let wlab = 7 * REG[r].name.length;                                  // estimate; measured where the browser can
+      try { const wm = lab.node().getComputedTextLength(); if (wm > 0) wlab = wm; } catch (e) { /* jsdom */ }
+      if (wlab + 6 > xb - xa) lab.attr('x', xa).attr('text-anchor', 'start').attr('y', m.t - 22);
+    });
+    const dticks = [1].concat(d3.range(5, DS.maxDeg, 5)).concat([DS.maxDeg]);   // 1, 5, 10, ..., 40, 44
+    svg2.append('g').attr('class', 'axis').attr('transform', `translate(0,${H - m.b})`).call(d3.axisBottom(x2).tickValues(dticks).tickFormat(d3.format('d')));
+    svg2.append('g').attr('class', 'axis').attr('transform', `translate(${m.l},0)`).call(d3.axisLeft(y2).ticks(5).tickFormat(d3.format('.1f')));
+    svg2.append('text').attr('transform', `translate(13,${(m.t + H - m.b) / 2}) rotate(-90)`).attr('text-anchor', 'middle')
+      .attr('font-size', 12).attr('fill', '#333').text('loss (MSE)');
+    const g2 = svg2.append('g');
+    // the gap, clipped at the cap: densely interpolate between degrees so the clamped edges follow the lines exactly
+    const clampL = v => Math.max(0, Math.min(CAP, v)), K2 = 24;
+    const dense = TAB.slice(0, -1).flatMap((t, k) => d3.range(K2).map(s => {
+      const u = s / K2, n = TAB[k + 1];
+      return { d: t.d + u, train: t.train + u * (n.train - t.train), val: t.val + u * (n.val - t.val) };
+    })).concat([TAB[TAB.length - 1]]);
+    g2.append('path').attr('class', 'gap').attr('fill', '#000').attr('opacity', 0.07)
+      .attr('d', d3.area().x(p => x2(p.d)).y0(p => y2(clampL(p.train))).y1(p => y2(clampL(p.val)))(dense));
+    const degMark = g2.append('line').attr('class', 'degmark').attr('stroke-width', 2).attr('y1', m.t).attr('y2', H - m.b);
+    g2.append('path').attr('class', 'trainpath').attr('fill', 'none').attr('stroke', TRAINLINE).attr('stroke-width', 2).attr('stroke-dasharray', '7 5')
+      .attr('d', clip2(TAB.map(t => [t.d, t.train])));
+    g2.append('path').attr('class', 'valpath').attr('fill', 'none').attr('stroke', VALC).attr('stroke-width', 2.5)
+      .attr('d', clip2(TAB.map(t => [t.d, t.val])));
+    // per-degree dots only where the loss is on the chart
+    g2.append('g').attr('class', 'traindots').selectAll('circle').data(TAB.filter(t => t.train <= CAP)).join('circle').attr('cx', t => x2(t.d)).attr('cy', t => y2(t.train)).attr('r', 3).attr('fill', TRAINLINE);
+    g2.append('g').attr('class', 'valdots').selectAll('circle').data(TAB.filter(t => t.val <= CAP)).join('circle').attr('cx', t => x2(t.d)).attr('cy', t => y2(t.val)).attr('r', 3.5).attr('fill', VALC);
+    g2.append('circle').attr('class', 'minring').attr('cx', x2(BEST.d)).attr('cy', y2(BEST.val)).attr('r', 8).attr('fill', 'none').attr('stroke', REG.good.color).attr('stroke-width', 2);
+    const curDots = g2.append('g').attr('class', 'curdots');
+
+    const regimeEl = document.getElementById('regime'), whyEl = document.getElementById('why');
+    const read1 = document.getElementById('read1'), read2 = document.getElementById('read2');
+    // d3.select('#bestread').text(`best validation loss ${fl(BEST.val)} at degree ${BEST.d}; "good" = within ${Math.round(DS.goodBand * 100)}% of it (degrees ${gLo}–${gHi})`);
+
+    function render() {
+      const d = state.d, t = TAB[d - 1], r = regimeOf(d), R = REG[r];
+      d3.select('#dlab').text(d);
+      regimeEl.textContent = `degree ${d}: ${R.name}`; regimeEl.style.color = R.color;
+      document.getElementById('lsw').style.borderColor = R.color;
+      document.getElementById('lsw2').style.borderBottomColor = R.color;      // legend arrow follows the marker's regime color
+      const off = v => (v > CAP ? ' (off the chart)' : '');
+      whyEl.innerHTML = r === 'under'
+        ? `too simple; training loss and validation loss are both high, and the curve misses the shape of the runs.`
+        : r === 'good'
+          ? `validation loss is within ${Math.round(DS.goodBand * 100)}% of the best achievable.`
+          : d > DMAX
+            ? `The degree-${DMAX} polynomial passes through every training run exactly (training loss 0).`
+            : t.train < 1e-12
+              ? `The degree-${DMAX} polynomial passes through every training run exactly (training loss 0).`
+              : `training loss keeps falling while validation loss rises.`;
+
+      // the fitted curve, clipped to the plot at the exact crossing points (no breaks where it leaves and re-enters)
+      const [ylo, yhi] = y1.domain();
+      curve.attr('stroke', R.color).attr('d', clipPieces(xs.map(v => [v, t.f(v)]), ylo, yhi).map(lineP1).join(''));
+      read1.innerHTML = `degree-${d} fit to the ${TRAIN.length} training points: training loss ${fl(t.train)}, validation loss ${fl(t.val)}${off(t.val)}`;
+
+      degMark.attr('x1', x2(d)).attr('x2', x2(d)).attr('stroke', R.color);
+      // current-degree markers: a ring on each loss curve, or one arrow at the top edge for a loss that is off the chart
+      curDots.selectAll('*').remove();
+      [t.train, t.val].filter(v => v <= CAP).forEach(v => curDots.append('circle').attr('class', 'ring')
+        .attr('cx', x2(d)).attr('cy', y2(v)).attr('r', 6).attr('fill', 'none').attr('stroke', R.color).attr('stroke-width', 2));
+      if (t.train > CAP || t.val > CAP) curDots.append('path').attr('class', 'offchart')
+        .attr('d', `M${x2(d)},${m.t + 1} l-6,10 h12 z`).attr('fill', R.color);
+      read2.innerHTML = `degree ${d}: training ${fl(t.train)}${off(t.train)}, validation ${fl(t.val)}${off(t.val)}, gap ${fl(t.val - t.train)}`;
+    }
+
+    window.__ufApi = {
+      state: () => ({ d: state.d, n: N, ntrain: TRAIN.length, nval: VAL.length, best: BEST.d, bestVal: BEST.val, band: BAND, gLo, gHi, xbar: XBAR, xsd: XSD, ybar: YBAR, cap: CAP, dmax: DMAX, samples: NS }),
+      table: () => TAB.map(t => ({ d: t.d, dEff: t.dEff, train: t.train, val: t.val })),
+      clip: clipPieces, plotBox: () => ({ x0: m.l, x1: W - m.r, y0: m.t, y1: H - m.b, ydom1: y1.domain() }),
+      split: () => ({ train: TRAIN.slice(), val: VAL.slice(), order: ORDER.slice() }),
+      data: () => ({ x: X0.slice(), y: Y.slice() }),
+      regime: regimeOf, f: d => TAB[d - 1].f, setDeg
+    };
+
+    mjRun([document.getElementById('lead'), document.getElementById('defs'), document.getElementById('foot')]);
+    render();
+  }
+  window.addEventListener('load', main);
+  </script>
+</head>
+
+<body>
+  <h1>Underfitting, Good Fit, Overfitting</h1>
+  <p class="lead" id="lead">This dataset is of an experiment using the internal combusion engine (like what cars have). We are trying to predict a pollutant \(y=\) NOx (the concentration of nitrogen oxides in the exhaust) based on a measure of how rich or lean the fuel–air mixture is, \(x=\) E.
+    Slide the degree and watch the two losses: training loss can only fall, validation loss falls and then
+    rises, and the gap between them is what overfitting looks like. The loss axis is fixed at 0&ndash;1, so once a loss
+    is off the chart it stays off the chart (the readouts still give it). By degree 43 the polynomial passes through
+    all 44 training runs exactly &mdash; training loss 0 &mdash; and shoots off between them; the validation loss is then
+    around \(10^{22}\).</p>
+
+  <div id="banner">
+    <div id="regime"></div>
+    <div id="why"></div>
+  </div>
+  <div id="defs"></div>
+
+  <div class="controls">
+    <span><span class="clabel">degree \(d\):</span><input type="range" id="dslider" class="slider"> <span id="dlab"></span></span>
+    <span><button class="btn" id="bunder"></button><button class="btn" id="bgood"></button><button class="btn" id="bover"></button></span>
+  </div>
+
+  <div class="wrap">
+    <div class="panel">
+      <h3>The fit</h3>
+      <div class="read" id="read1"></div>
+      <div id="p1"></div>
+      <div class="xlab">\(x\) (\(E\), centered and divided by its sd)</div>
+      <div class="legend"><span class="dot"></span>training points (the fit sees these) &nbsp;<span class="dot hollow"></span>validation points (never seen by the fit)
+        &nbsp;<span class="sw" id="lsw"></span>degree-\(d\) fit, colored by regime</div>
+    </div>
+    <div class="panel">
+      <h3>Loss vs degree</h3>
+      <div class="read" id="read2"></div>
+      <div id="p2"></div>
+      <div class="xlab">polynomial degree \(d\)</div>
+      <div class="legend"><span class="sw dash">
+        
+      </span>
+      training loss &nbsp;<span class="sw"></span>validation loss &nbsp; shaded: the gap &nbsp; <span class="sw ring"></span>smallest validation loss &nbsp; <span class="sw tri" id="lsw2"></span>off the chart (above 1)<br>
+        <span id="bestread"></span></div>
+    </div>
+  </div>
+
+  <!-- <p id="foot">Same coordinates as the two previous applets: \(x\) is \(E\) minus its mean, divided by its standard deviation;
+    \(\text{NOx}\) is minus its mean. The fit is centered on the training runs (the same as fitting an intercept), so the
+    validation runs never enter it. The split is interleaved on purpose: every validation run has training runs on both
+    sides, so validation loss measures how well the curve fills the gaps between them; with a random split the
+    high-degree fits sometimes have to extrapolate past the last training run and the validation loss jumps by orders of
+    magnitude. K-fold cross-validation (previous applet) averages over many splits, which is why its curve is steadier.
+    The 25% band that defines "good fit" is a convention, not a theorem. The loss axis is fixed at 0&ndash;1: a loss
+    above 1 is marked by an arrow at the top edge and its curve simply leaves the chart. With 44 training runs, degree 43
+    (44 coefficients, counting the intercept) passes through every training run exactly, so its training loss is 0;
+    degree 44 has more coefficients than runs and nothing left to fit, so it shows the same curve. The polynomials are
+    computed in an orthonormal basis built on the training \(x\)'s (Vandermonde with Arnoldi), which gives the same
+    curve as regressing on \(x, x^2, \dots, x^d\) but stays numerically accurate all the way to degree 43, where the
+    plain powers fail long before.</p> -->
+    <ol>
+      <li>Which is the best value for \(d\) and why?</li>
+      <li>What is happening when at \(d=44\) to the fit and the training set?</li>
+      <li>Why does this induce a lot of valdiation error?</li>
+      <li>How does this relate to bias and variance?</li>
+    </ol>
+</body>
+</html>

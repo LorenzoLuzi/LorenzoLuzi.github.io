@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>K-Fold Cross-Validation: Scored on Runs the Fit Never Saw</title>
+  <link rel="stylesheet" href="../styling/global.css">
+
+  <!--
+    SOURCES (kept in source; not displayed in the applet UI)
+    - Data: the same 88 runs as polynomial-regression.html - Brinkman (1981), "Ethanol Fuel - A
+      Single-Cylinder Engine Study of Efficiency and Exhaust Emissions", SAE Technical Paper 810345,
+      as distributed in R's lattice package (datasets/ethanol.csv). NOx in micrograms per joule,
+      E = fuel/air equivalence ratio. x = (E - mean E)/sd E, y = NOx - mean NOx, as in that applet.
+    - K-fold CV as in ISLR ch. 5: random split into K near-equal folds; for each fold fit the
+      degree-d polynomial on the other folds (centered on its own training runs, i.e. with an
+      intercept) and score the squared error on the held-out fold; CV_K = mean of the K fold MSEs.
+      Leave-one-out = K = n = 88.
+    - Reference numbers (numpy, seed-independent where stated): training MSE by degree 1..12:
+      1.255, .281, .278, .128, .119, .104, .100, .099, .098, .097, .096, .091 (monotone).
+      LOO CV: 1.315, .302, .309, .146, .134, .136, .129, .126, .118, .164, .123, 2.093.
+      5-fold CV varies with the split by ~0.01-0.03 for degrees <= 9 and explodes at 12 (2-3.4).
+      Over 50 random 5-fold splits the CV-minimising degree was 8 or 9 in 35 of them.
+  -->
+
+  <!-- applet-SPECIFIC styles only -->
+  <style>
+    body { font-family: system-ui, -apple-system, Arial, sans-serif; margin: 24px; color: #222; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    .lead { color: #555; max-width: 92ch; line-height: 1.5; margin-top: 4px; font-size: 16px; }
+
+    #eqdef { text-align: center; font-size: 20px; margin: 14px 0 2px; min-height: 34px; }
+    #eqsub { text-align: center; font-size: 14.5px; color: #555; margin: 0 0 8px; min-height: 20px; }
+    #eqlive { text-align: center; font-size: 19px; margin: 4px 0 10px; min-height: 34px; }
+
+    .controls { display: flex; flex-wrap: wrap; gap: 10px 34px; justify-content: center; align-items: center;
+                font-size: 15px; margin: 2px 0 12px; }
+    .controls label.rb { margin: 0 4px; cursor: pointer; white-space: nowrap; }
+    .controls input[type=radio] { vertical-align: -2px; margin-right: 3px; }
+    .controls input[type=range] { vertical-align: middle; width: 200px; }
+    .clabel { color: #555; margin-right: 6px; }
+    #dlab { display: inline-block; min-width: 2.4em; font-variant-numeric: tabular-nums; }
+    .btn { padding: 6px 12px; font-size: 14px; margin: 0 3px; cursor: pointer; background: #f0f0f0;
+           border: 1px solid #bbb; border-radius: 6px; }
+    .btn:hover { background: #e6e6e6; }
+    .btn:disabled { color: #aaa; cursor: default; background: #f7f7f7; }
+
+    .wrap { display: flex; flex-wrap: wrap; gap: 26px; align-items: flex-start; justify-content: center; margin-top: 4px; }
+    .panel { width: 380px; }
+    .panel h3 { font-size: 15px; font-weight: bold; margin: 0 0 4px; text-align: center; }
+    .read { text-align: center; font-size: 13.5px; color: #444; min-height: 40px; font-variant-numeric: tabular-nums; line-height: 1.45; }
+    .xlab { text-align: center; font-size: 14px; margin-top: -2px; min-height: 22px; color: #333; }
+    .legend { text-align: center; font-size: 13px; color: #777; margin-top: 4px; line-height: 1.5; }
+    .sw { display: inline-block; width: 18px; height: 0; border-top: 3px solid #222; vertical-align: middle; margin: 0 3px 0 6px; }
+    .sw.dash { border-top-style: dashed; border-color: #999; }
+    .sw.ring { width: 10px; height: 10px; border: 2px solid #222; border-radius: 50%; }   /* = .minring (CURVE) */
+    .sw.thin { border-top-width: 2px; }
+    .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #999; vertical-align: middle; margin: 0 3px 0 6px; }
+    .axis text { font-size: 11px; }
+    svg { overflow: visible; }
+
+    #foot { background: #f6f6f8; border: 1px solid #e0e0e6; border-radius: 6px; padding: 10px 14px;
+            font-size: 15px; max-width: 980px; margin: 24px auto 0; line-height: 1.8; color: #333; }
+  </style>
+
+  <!-- MathJax v3 (config BEFORE the library). Full bundle, no runtime loads. -->
+  <script>
+    window.MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], packages: { '[+]': ['color'] } },
+      chtml: { matchFontHeight: false, scale: 1.1 }
+    };
+  </script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js"></script>
+  <script src="https://d3js.org/d3.v7.js"></script>
+
+  <script>
+  // ---- DATA (swap here) -----------------------------------------------------
+  // Brinkman's ethanol engine runs, "E,NOx" per row: the same block as polynomial-regression.html.
+  // x = (E - mean E) / sd E, y = NOx - mean NOx. Degrees, K choices and seeds are parameters.
+  const DS = {
+    xScale: 'sd',
+    xTeX: 'x', yTeX: '\\text{NOx}',
+    xAxis: 'x  (E, centered and divided by its sd)',   // plain-text axis titles (no live math on the plots)
+    yAxis: 'NOx, centered (µg/J)',
+    maxDeg: 12,                                  // degree slider 1..maxDeg
+    Ks: [2, 5, 10, 'n'],                         // radio choices; 'n' = leave-one-out
+    K0: 5, deg0: 2, seed0: 413,
+    raw: '0.907,3.741;0.761,2.295;1.108,1.498;1.016,2.881;1.189,0.76;1.001,3.12;1.231,0.638;1.123,1.17;1.042,2.358;1.215,0.606;0.93,3.669;1.152,1;1.138,0.981;0.601,1.192;0.696,0.926;0.686,1.59;1.072,1.806;1.074,1.962;0.934,4.028;0.808,3.148;1.071,1.836;1.009,2.845;1.142,1.013;1.229,0.414;1.175,0.812;0.568,0.374;0.977,3.623;0.767,1.869;1.006,2.836;0.893,3.567;1.152,0.866;0.693,1.369;1.232,0.542;1.036,2.739;1.125,1.2;1.081,1.719;0.868,3.423;0.762,1.634;1.144,1.021;1.045,2.157;0.797,3.361;1.115,1.39;1.07,1.947;1.219,0.962;0.637,0.571;0.733,2.219;0.715,1.419;0.872,3.519;0.765,1.732;0.878,3.206;0.811,2.471;0.676,1.777;1.045,2.571;0.968,3.952;0.846,3.931;0.684,1.587;0.729,1.397;0.911,3.536;0.808,2.202;1.168,0.756;0.749,1.62;0.892,3.656;1.002,2.964;0.812,3.76;1.23,0.672;0.804,3.677;0.813,3.517;1.002,3.29;0.696,1.139;1.199,0.727;1.03,2.581;0.602,0.923;0.694,1.527;0.816,3.388;1.037,2.085;1.181,0.966;0.899,3.488;1.227,0.754;1.18,0.797;0.795,2.064;0.99,3.732;1.201,0.586;0.629,0.561;0.608,0.563;0.584,0.678;0.562,0.37;0.535,0.53;0.655,1.9'
+  };
+  // ---------------------------------------------------------------------------
+
+  const ROWS = DS.raw.split(';').map(s => s.split(',').map(Number));
+  const N = ROWS.length;
+  const E0 = ROWS.map(r => r[0]), Y0 = ROWS.map(r => r[1]);
+  const XBAR = d3.mean(E0), XSD = Math.sqrt(d3.mean(E0, v => (v - XBAR) ** 2)), YBAR = d3.mean(Y0);
+  const XS = DS.xScale === 'sd' ? XSD : (+DS.xScale || 1);
+  const X0 = E0.map(v => (v - XBAR) / XS);
+  const Y = Y0.map(v => v - YBAR);
+  const DEGS = d3.range(1, DS.maxDeg + 1);
+
+  const W = 380, H = 300, HB = 230, m = { t: 12, r: 14, b: 34, l: 50 };
+  const CURVE = '#222', TRAIN = '#999', GRAY = '#9aa5b1';
+  const FOLDC = d3.schemeTableau10;                // fold k gets FOLDC[k % 10] (K <= 10 in practice)
+  const foldColor = (k, K) => (K > 10 ? GRAY : FOLDC[k % 10]);
+
+  const hexRGB = h => [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)).join(',');
+  const texc = (hex, s) => `\\textcolor[RGB]{${hexRGB(hex.replace('#', ''))}}{${s}}`;
+  const f2 = v => d3.format('.2f')(v).replace('−', '-'), f3 = v => d3.format('.3f')(v).replace('−', '-');
+
+  // seeded RNG (mulberry32) + Fisher-Yates: the fold split is reproducible and re-drawable
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      let t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  // random split into K near-equal folds (the first N % K folds get one extra run); K = N is LOO in data order
+  function makeFolds(K, seed) {
+    const idx = d3.range(N);
+    if (K < N) {
+      const rng = mulberry32(seed);
+      for (let i = N - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [idx[i], idx[j]] = [idx[j], idx[i]]; }
+    }
+    const folds = [], base = Math.floor(N / K), extra = N % K;
+    let p = 0;
+    for (let k = 0; k < K; k++) { const sz = base + (k < extra ? 1 : 0); folds.push(idx.slice(p, p + sz).sort((a, b) => a - b)); p += sz; }
+    const foldOf = new Array(N);
+    folds.forEach((f, k) => f.forEach(i => { foldOf[i] = k; }));
+    return { folds, foldOf };
+  }
+
+  // least squares by modified Gram-Schmidt applied twice, then back-substitution
+  function lstsq(A, b) {
+    const n = A.length, d = A[0].length;
+    const V = Array.from({ length: d }, (_, j) => A.map(r => r[j]));
+    const R = Array.from({ length: d }, () => new Array(d).fill(0));
+    const dot = (u, v) => { let s = 0; for (let i = 0; i < n; i++) s += u[i] * v[i]; return s; };
+    for (let j = 0; j < d; j++) {
+      for (let pass = 0; pass < 2; pass++)
+        for (let i = 0; i < j; i++) {
+          const r = dot(V[i], V[j]); R[i][j] += r;
+          for (let t = 0; t < n; t++) V[j][t] -= r * V[i][t];
+        }
+      R[j][j] = Math.sqrt(dot(V[j], V[j]));
+      for (let t = 0; t < n; t++) V[j][t] /= R[j][j];
+    }
+    const qb = V.map(q => dot(q, b)), beta = new Array(d).fill(0);
+    for (let j = d - 1; j >= 0; j--) {
+      let s = qb[j];
+      for (let i = j + 1; i < d; i++) s -= R[j][i] * beta[i];
+      beta[j] = s / R[j][j];
+    }
+    return beta;
+  }
+
+  // degree-d polynomial fitted to the rows `idx`, centered on THOSE rows (== an intercept), so nothing
+  // about held-out rows enters the fit. Returns the prediction function.
+  function fitDeg(idx, d) {
+    const xs = idx.map(i => X0[i]), ys = idx.map(i => Y[i]);
+    const mu = DEGS.slice(0, d).map(k => d3.mean(xs, v => v ** k)), yb = d3.mean(ys);
+    const A = xs.map(v => DEGS.slice(0, d).map((k, j) => v ** k - mu[j]));
+    const beta = lstsq(A, ys.map(v => v - yb));
+    return { beta, f: x => yb + d3.sum(beta, (b, j) => b * (x ** (j + 1) - mu[j])) };
+  }
+  const mse = (idx, f) => d3.mean(idx, i => (Y[i] - f(X0[i])) ** 2);
+
+  // everything CV needs for one fold split: per degree, the K fold fits, their held-out MSEs, the mean,
+  // and the training MSE of the fit on all N rows
+  function cvTable(folds, foldOf) {
+    const all = d3.range(N);
+    return DEGS.map(d => {
+      const fits = folds.map((f, k) => fitDeg(all.filter(i => foldOf[i] !== k), d));
+      const mses = folds.map((f, k) => mse(f, fits[k].f));
+      const full = fitDeg(all, d);
+      return { d, fits, mses, cv: d3.mean(mses), train: mse(all, full.f), fullF: full.f };
+    });
+  }
+
+  // ALL typesets share ONE chain; typesetClear() first so replaced DOM cannot crash the next run
+  function mjRun(els) {
+    const go = () => {
+      const live = (els || []).filter(e => e && e.isConnected);
+      if (!live.length || !window.MathJax || !MathJax.typesetPromise) return null;
+      if (MathJax.typesetClear) MathJax.typesetClear();
+      return MathJax.typesetPromise(live).catch(() => {});
+    };
+    window.__mjChain = (window.__mjChain || Promise.resolve()).then(() => {
+      if (window.MathJax && MathJax.typesetPromise) return go();
+      return new Promise(r => setTimeout(r, 150)).then(go);
+    });
+    return window.__mjChain;
+  }
+  // double-buffered live equation slot: the visible child always holds rendered math
+  function MathSlot(el) {
+    this.a = document.createElement('span'); this.b = document.createElement('span');
+    this.b.style.display = 'none'; el.append(this.a, this.b); this.showA = true; this.cur = null;
+  }
+  MathSlot.prototype.set = function (tex) {
+    if (tex === this.cur) return;
+    this.cur = tex;
+    const hidden = this.showA ? this.b : this.a, vis = this.showA ? this.a : this.b;
+    hidden.innerHTML = tex; this.showA = !this.showA;
+    mjRun([hidden]).then(() => { hidden.style.display = ''; vis.style.display = 'none'; });
+  };
+
+  function main() {
+    if (main.done) return; main.done = true;
+
+    const state = { K: DS.K0, d: DS.deg0, seed: DS.seed0, step: 1, folds: null, foldOf: null, tab: null };
+    const Kval = v => (v === 'n' ? N : v);
+    const isLOO = () => state.K === N;
+
+    function resplit() {
+      const sp = makeFolds(state.K, state.seed);
+      state.folds = sp.folds; state.foldOf = sp.foldOf; state.tab = cvTable(sp.folds, sp.foldOf);
+    }
+    resplit();
+
+    // ---- equations -----------------------------------------------------------
+    // document.getElementById('eqdef').innerHTML =
+    //   '\\( \\text{CV}_K \\;=\\; \\frac{1}{K}\\sum_{k=1}^{K} \\text{MSE}_k, \\qquad ' +
+    //   '\\text{MSE}_k \\;=\\; \\frac{1}{n_k}\\sum_{i \\in \\text{fold } k}\\big(\\text{NOx}_i - \\hat f^{(-k)}(x_i)\\big)^2 \\)';
+    document.getElementById('eqdef').innerHTML =
+      '\\( \\text{CV}_K \\;=\\; \\frac{1}{K}\\sum_{k=1}^{K} \\text{MSE}_k, \\qquad ' +
+      '\\text{MSE}_k \\;=\\; \\text{MSE on heldout fold } k \\)';
+    const eqLive = new MathSlot(document.getElementById('eqlive'));
+
+    // ---- controls -------------------------------------------------------------
+    const kbox = d3.select('#kctl');
+    DS.Ks.forEach(v => {
+      const K = Kval(v), lab = kbox.append('label').attr('class', 'rb');
+      lab.append('input').attr('type', 'radio').attr('name', 'K').attr('id', 'K' + K).attr('value', K)
+        .property('checked', K === state.K).on('change', () => { state.K = K; state.step = 1; resplit(); render(true); });
+      lab.append('span').text(v === 'n' ? `${N} (leave-one-out)` : String(K));
+    });
+    const dsl = document.getElementById('dslider');
+    dsl.min = 1; dsl.max = DS.maxDeg; dsl.step = 1; dsl.value = state.d;
+    // round + clamp: a programmatic .value need not respect step/min/max
+    dsl.addEventListener('input', () => { state.d = Math.max(1, Math.min(DS.maxDeg, Math.round(+dsl.value) || 1)); render(false); });
+    const bNext = document.getElementById('bnext'), bAll = document.getElementById('ball'),
+          bShuf = document.getElementById('bshuf'), bReset = document.getElementById('breset');
+    bNext.onclick = () => { if (state.step < state.K) { state.step++; render(false); } };
+    bAll.onclick = () => { state.step = state.K; render(false); };
+    bShuf.onclick = () => { if (!isLOO()) { state.seed++; state.step = 1; resplit(); render(true); } };
+    bReset.onclick = () => { state.step = 1; render(false); };
+
+    // ---- panel 1: one fold at a time -----------------------------------------
+    const pad = 0.06 * (d3.max(Y) - d3.min(Y));
+    const x1 = d3.scaleLinear().domain(d3.extent(X0)).nice().range([m.l, W - m.r]);
+    const y1 = d3.scaleLinear().domain([d3.min(Y) - pad, d3.max(Y) + pad]).nice().range([H - m.b, m.t]);
+    const svg1 = d3.select('#p1').append('svg').attr('width', W).attr('height', H);
+    svg1.append('clipPath').attr('id', 'clip1').append('rect').attr('x', m.l).attr('y', m.t).attr('width', W - m.l - m.r).attr('height', H - m.t - m.b);
+    svg1.append('g').attr('class', 'axis').attr('transform', `translate(0,${H - m.b})`).call(d3.axisBottom(x1).ticks(6));
+    svg1.append('g').attr('class', 'axis').attr('transform', `translate(${m.l},0)`).call(d3.axisLeft(y1).ticks(6));
+    svg1.append('text').attr('transform', `translate(13,${(m.t + H - m.b) / 2}) rotate(-90)`).attr('text-anchor', 'middle')
+      .attr('font-size', 12).attr('fill', '#333').text(DS.yAxis);
+    const g1 = svg1.append('g').attr('clip-path', 'url(#clip1)');
+    const gRes = g1.append('g').attr('class', 'res'), gDots = g1.append('g').attr('class', 'dots');
+    const curve1 = g1.append('path').attr('class', 'curve').attr('fill', 'none').attr('stroke', CURVE).attr('stroke-width', 3);
+    const xs = d3.range(240).map(i => d3.min(X0) + (d3.max(X0) - d3.min(X0)) * i / 239);
+    const inY = v => v >= y1.domain()[0] && v <= y1.domain()[1];
+    const clampY = v => Math.max(y1.domain()[0], Math.min(y1.domain()[1], v));
+
+    // ---- panel 2: the K held-out errors --------------------------------------
+    const svg2 = d3.select('#p2').append('svg').attr('width', W).attr('height', HB);
+    const gBars = svg2.append('g'), gAx2x = svg2.append('g').attr('class', 'axis').attr('transform', `translate(0,${HB - m.b})`),
+          gAx2y = svg2.append('g').attr('class', 'axis').attr('transform', `translate(${m.l},0)`);
+    svg2.append('text').attr('transform', `translate(13,${(m.t + HB - m.b) / 2}) rotate(-90)`).attr('text-anchor', 'middle')
+      .attr('font-size', 12).attr('fill', '#333').text('held-out MSE');
+    const trainLine = svg2.append('line').attr('class', 'trainline').attr('stroke', TRAIN).attr('stroke-width', 2).attr('stroke-dasharray', '7 5');
+    const cvLine = svg2.append('line').attr('class', 'cvline').attr('stroke', CURVE).attr('stroke-width', 2.5);
+
+    // ---- panel 3: which degree? ---------------------------------------------
+    const x3 = d3.scaleLinear().domain([1, DS.maxDeg]).range([m.l, W - m.r]);
+    const y3 = d3.scaleLog().range([H - m.b, m.t]);
+    const svg3 = d3.select('#p3').append('svg').attr('width', W).attr('height', H);
+    svg3.append('g').attr('class', 'axis').attr('transform', `translate(0,${H - m.b})`).call(d3.axisBottom(x3).ticks(DS.maxDeg).tickFormat(d3.format('d')));
+    const gAx3y = svg3.append('g').attr('class', 'axis').attr('transform', `translate(${m.l},0)`);
+    svg3.append('text').attr('transform', `translate(13,${(m.t + H - m.b) / 2}) rotate(-90)`).attr('text-anchor', 'middle')
+      .attr('font-size', 12).attr('fill', '#333').text('MSE (log scale)');
+    const g3 = svg3.append('g');
+    const degMark = g3.append('rect').attr('class', 'degmark').attr('fill', '#000').attr('opacity', 0.06).attr('y', m.t).attr('height', H - m.t - m.b);
+    const gFold3 = g3.append('g'), trainPath = g3.append('path').attr('class', 'trainpath').attr('fill', 'none').attr('stroke', TRAIN).attr('stroke-width', 2).attr('stroke-dasharray', '7 5'),
+          cvPath = g3.append('path').attr('class', 'cvpath').attr('fill', 'none').attr('stroke', CURVE).attr('stroke-width', 2.5),
+          gTrainDots = g3.append('g'), gCvDots = g3.append('g'),
+          minRing = g3.append('circle').attr('class', 'minring').attr('r', 8).attr('fill', 'none').attr('stroke', CURVE).attr('stroke-width', 2);
+
+    const read1 = document.getElementById('read1'), read2 = document.getElementById('read2'), read3 = document.getElementById('read3');
+    const leg1 = document.getElementById('leg1');
+
+    function render(resplitDone) {
+      const K = state.K, d = state.d, step = state.step, folds = state.folds, tab = state.tab[d - 1];
+      const cur = step - 1;                                     // the fold being shown (0-based)
+      const fc = k => foldColor(k, K);
+      bNext.disabled = step >= K; bShuf.disabled = isLOO();
+      d3.select('#dlab').text(d);
+      d3.select('#Kread').text(isLOO() ? `${N} folds of 1 run (leave-one-out)` :
+        `${K} folds of ${d3.min(folds, f => f.length)}–${d3.max(folds, f => f.length)} runs`);
+
+      // ---- panel 1
+      const held = folds[cur], fit = tab.fits[cur];
+      gDots.selectAll('circle').data(d3.range(N)).join('circle')
+        .attr('cx', i => x1(X0[i])).attr('cy', i => y1(Y[i]))
+        .attr('r', i => state.foldOf[i] === cur ? 4 : 2.6)
+        .attr('fill', i => fc(state.foldOf[i]))
+        .attr('stroke', i => state.foldOf[i] === cur ? '#222' : 'none').attr('stroke-width', 1.2)
+        .attr('opacity', i => state.foldOf[i] === cur ? 1 : 0.35);
+      gRes.selectAll('line').data(held).join('line')
+        .attr('x1', i => x1(X0[i])).attr('x2', i => x1(X0[i]))
+        .attr('y1', i => y1(Y[i])).attr('y2', i => y1(clampY(fit.f(X0[i]))))
+        .attr('stroke', fc(cur)).attr('stroke-width', 1.6).attr('opacity', 0.9);
+      curve1.attr('d', d3.line().defined(p => inY(p[1])).x(p => x1(p[0])).y(p => y1(p[1]))(xs.map(v => [v, fit.f(v)])));
+      read1.innerHTML = `fold ${step} of ${K}: degree-${d} polynomial fitted on the other ${N - held.length} runs, ` +
+        `scored on these ${held.length}: MSE<sub>${step}</sub> = ${f3(tab.mses[cur])}`;
+      leg1.innerHTML = `<span class="sw"></span>fit without fold ${step} &nbsp;<span class="sw thin" style="border-color:${fc(cur)}"></span>held-out errors (the squared lengths are averaged)`;
+
+      // ---- panel 2
+      const xb = d3.scaleBand().domain(d3.range(K)).range([m.l, W - m.r]).paddingInner(K > 20 ? 0.15 : 0.3).paddingOuter(0.2);
+      const top = Math.max(d3.max(tab.mses), tab.train) * 1.12;
+      const yb = d3.scaleLinear().domain([0, top]).nice().range([HB - m.b, m.t]);
+      gAx2x.call(d3.axisBottom(xb).tickValues(K > 12 ? d3.range(0, K, 10).concat([K - 1]) : d3.range(K)).tickFormat(k => k + 1));
+      gAx2y.call(d3.axisLeft(yb).ticks(5));
+      gBars.selectAll('rect').data(d3.range(K)).join('rect')
+        .attr('x', k => xb(k)).attr('width', xb.bandwidth())
+        .attr('y', k => k < step ? yb(tab.mses[k]) : yb(0)).attr('height', k => k < step ? yb(0) - yb(tab.mses[k]) : 0)
+        .attr('fill', k => fc(k)).attr('opacity', k => k === cur ? 1 : 0.7).attr('stroke', k => k === cur ? '#222' : 'none');
+      trainLine.attr('x1', m.l).attr('x2', W - m.r).attr('y1', yb(tab.train)).attr('y2', yb(tab.train));
+      cvLine.attr('x1', m.l).attr('x2', W - m.r).attr('y1', yb(tab.cv)).attr('y2', yb(tab.cv)).style('display', step >= K ? null : 'none');
+      const kmax = d3.maxIndex(tab.mses), dominated = tab.mses[kmax] > 5 * tab.cv;      // one fold carrying the average
+      read2.innerHTML = step >= K
+        ? `all ${K} folds scored: CV<sub>${K}</sub> = ${f3(tab.cv)} (mean of the bars); training MSE of the fit on all ${N} runs: ${f3(tab.train)}` +
+          (dominated ? `. One fold dominates: MSE<sub>${kmax + 1}</sub> = ${f3(tab.mses[kmax])}` : '')
+        : `${step} of ${K} folds scored; ${K - step} to go. Dashed: training MSE of the fit on all ${N} runs, ${f3(tab.train)}`;
+
+      // live equation
+      const nums = tab.mses.map((v, k) => (k < step ? texc(fc(k), f2(v)) : '\\textcolor[RGB]{170,170,170}{?}'));
+      let sum;
+      if (K <= 10) sum = nums.join(' \\;+\\; ');
+      else sum = step >= K ? `${nums[0]} \\;+\\; ${nums[1]} \\;+\\; \\cdots \\;+\\; ${nums[K - 1]}`
+                           : `${nums[0]} \\;+\\; \\cdots \\;+\\; ${nums[Math.max(step - 1, 0)]} \\;+\\; \\cdots\\quad(${step}\\text{ of }${K}\\text{ scored})`;
+      eqLive.set(`\\( \\text{CV}_{${K}} \\;=\\; \\tfrac{1}{${K}}\\big(${sum}\\big)` + (step >= K ? ` \\;=\\; ${f3(tab.cv)}` : '') + ' \\)');
+
+      // ---- panel 3
+      const allVals = state.tab.flatMap(t => [t.train, t.cv].concat(K <= 10 ? t.mses : []));
+      y3.domain([d3.min(allVals) * 0.8, d3.max(allVals) * 1.25]);
+      gAx3y.call(d3.axisLeft(y3).ticks(6, '.2~f'));
+      degMark.attr('x', x3(d) - 9).attr('width', 18);
+      if (K <= 10) {
+        gFold3.selectAll('circle').data(state.tab.flatMap(t => t.mses.map((v, k) => ({ d: t.d, v, k })))).join('circle')
+          .attr('cx', p => x3(p.d)).attr('cy', p => y3(p.v)).attr('r', 2.2).attr('fill', p => fc(p.k)).attr('opacity', 0.6);
+      } else gFold3.selectAll('circle').remove();
+      trainPath.attr('d', d3.line().x(t => x3(t.d)).y(t => y3(t.train))(state.tab));
+      cvPath.attr('d', d3.line().x(t => x3(t.d)).y(t => y3(t.cv))(state.tab));
+      gTrainDots.selectAll('circle').data(state.tab).join('circle').attr('cx', t => x3(t.d)).attr('cy', t => y3(t.train)).attr('r', 3).attr('fill', TRAIN);
+      gCvDots.selectAll('circle').data(state.tab).join('circle').attr('cx', t => x3(t.d)).attr('cy', t => y3(t.cv)).attr('r', 3.5).attr('fill', CURVE);
+      const best = state.tab.reduce((a, t) => (t.cv < a.cv ? t : a), state.tab[0]);
+      minRing.attr('cx', x3(best.d)).attr('cy', y3(best.cv));
+      const worst = state.tab[state.tab.length - 1];
+      read3.innerHTML = `degree ${d}: training ${f3(tab.train)}, CV<sub>${K}</sub> ${f3(tab.cv)}. ` +
+        `CV<sub>${K}</sub> is smallest at degree ${best.d} (${f3(best.cv)}); at degree ${worst.d} it is ${f3(worst.cv)} while training keeps falling (${f3(worst.train)}).`;
+    }
+
+    window.__cvApi = {
+      state: () => ({ K: state.K, d: state.d, step: state.step, seed: state.seed, n: N, xbar: XBAR, xsd: XSD, ybar: YBAR }),
+      folds: () => state.folds.map(f => f.slice()), foldOf: () => state.foldOf.slice(),
+      table: () => state.tab.map(t => ({ d: t.d, mses: t.mses.slice(), cv: t.cv, train: t.train })),
+      fitF: (k, d) => state.tab[d - 1].fits[k].f, fullF: d => state.tab[d - 1].fullF,
+      data: () => ({ x: X0.slice(), y: Y.slice() }),
+      setK: K => { document.getElementById('K' + K).checked = true; state.K = K; state.step = 1; resplit(); render(true); },
+      setDeg: d => { dsl.value = d; state.d = d; render(false); },
+      next: () => bNext.onclick(), all: () => bAll.onclick(), shuffle: () => bShuf.onclick(), reset: () => bReset.onclick(),
+      tex: () => ({ live: eqLive.cur })
+    };
+
+    mjRun([document.getElementById('lead'), document.getElementById('eqdef'), document.getElementById('eqsub'), document.getElementById('foot')]);
+    render(true);
+  }
+  window.addEventListener('load', main);
+  </script>
+</head>
+
+<body>
+  <h1>K-Fold Cross-Validation: Scored on Runs the Fit Never Saw</h1>
+  <p class="lead" id="lead">This dataset is of an experiment on an internal combustion engine (like the one in a car). We are trying to predict a pollutant \(y=\) NOx (the concentration of nitrogen oxides in the exhaust) based on a measure of how rich or lean the fuel–air mixture is, \(x=\) E.  
+    K-fold cross-validation
+    splits the runs at random into \(K\) folds; for each fold it fits on the other \(K-1\) and scores the fold it never saw;
+    the \(K\) scores are averaged. </p>
+
+  <div id="eqdef"></div>
+  <div id="eqsub">\(\hat f^{(-k)}\) is the degree-\(d\) polynomial fitted without fold \(k\).</div>
+  <div id="eqlive"></div>
+
+  <div class="controls">
+    <span><span class="clabel">\(K\):</span><span id="kctl"></span> <span id="Kread" style="color:#777; font-size:13.5px; margin-left:6px"></span></span>
+    <span><span class="clabel">degree \(d\):</span><input type="range" id="dslider" class="slider"> <span id="dlab"></span></span>
+    <span>
+      <button class="btn" id="bnext">Next fold</button><button class="btn" id="ball">Run all folds</button>
+      <button class="btn" id="bshuf">Shuffle folds</button><button class="btn" id="breset">Reset</button>
+    </span>
+  </div>
+
+  <div class="wrap">
+    <div class="panel">
+      <h3>1. One fold at a time</h3>
+      <div class="read" id="read1"></div>
+      <div id="p1"></div>
+      <div class="xlab">\(x\) (\(E\), centered and divided by its sd)</div>
+      <div class="legend" id="leg1"></div>
+    </div>
+    <div class="panel">
+      <h3>2. The K held-out errors</h3>
+      <div class="read" id="read2"></div>
+      <div id="p2"></div>
+      <div class="xlab">fold</div>
+      <div class="legend"><span class="sw"></span>CV\(_K\), the mean of the bars &nbsp;<span class="sw dash"></span>training MSE (fit on all runs)</div>
+    </div>
+    <div class="panel">
+      <h3>3. Which degree?</h3>
+      <div class="read" id="read3"></div>
+      <div id="p3"></div>
+      <div class="xlab">polynomial degree \(d\)</div>
+      <div class="legend"><span class="sw"></span>CV\(_K\) &nbsp;<span class="sw dash"></span>training MSE &nbsp;<span class="dot"></span>one fold's MSE\(_k\) &nbsp;<span class="sw ring"></span>smallest CV</div>
+    </div>
+  </div>
+
+  <!-- <p id="foot">Same coordinates as the polynomial applet: \(x\) is \(E\) minus its mean, divided by its standard deviation;
+    \(\text{NOx}\) is minus its mean. Each fold's fit is centered on its own training runs (the same as fitting an intercept),
+    so nothing about the held-out runs enters it. The folds are a random split into \(K\) near-equal groups; Shuffle draws
+    a new split and the CV numbers move a little, which is the variance of the estimate. Leave-one-out (\(K = n = 88\)) has
+    no randomness. Training MSE is \(\frac{1}{n}\sum_i (\text{NOx}_i - \hat f(x_i))^2\) for the fit on all runs, scored on
+    those same runs.</p> -->
+</body>
+</html>
