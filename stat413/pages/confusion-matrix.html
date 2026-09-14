@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Confusion Matrix &mdash; Accuracy, Recall, Precision, Specificity</title>
+  <link rel="stylesheet" href="../styling/global.css">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; color: #222; }
+    h1 { font-size: 24px; }
+    .cm-panels { display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; }
+    .cm-panel h3 { font-size: 15px; font-weight: bold; margin: 0 0 4px 0; text-align: center; }
+    .cm-controls { margin: 16px 0; display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; }
+    .cm-controls fieldset { border: 1px solid #ccc; border-radius: 6px; padding: 10px 14px; }
+    .cm-controls legend { font-weight: bold; font-size: 13px; padding: 0 6px; }
+    .cm-buttons button { padding: 8px 14px; font-size: 14px; margin: 3px 6px 3px 0; cursor: pointer; }
+    .cm-eq { background: #f6f6f8; border: 1px solid #e0e0e6; border-radius: 6px;
+             padding: 12px 16px; margin-top: 14px; font-size: 15px; line-height: 2.1; max-width: 860px; }
+    .cm-eq .live { font-variant-numeric: tabular-nums; }
+    .cm-eq .b { font-weight: bold; }
+    .cm-hint { font-size: 13px; color: #777; font-style: italic; }
+    .cm-notes { max-width: 860px; font-size: 14px; color: #444; margin-top: 12px; }
+  </style>
+
+  <script src="https://d3js.org/d3.v7.js"></script>
+  <script>
+    window.MathJax = {
+      tex: { inlineMath: [['\\(', '\\)'], ['$', '$']], packages: { '[+]': ['color'] } },
+      svg: { fontCache: 'global' }
+    };
+  </script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js"></script>
+
+  <script>
+  // ===========================================================================
+  // The confusion matrix, live. A plane of +/- points (glyph = ACTUAL class)
+  // and one vertical decision boundary: left of the line is PREDICTED +,
+  // right is PREDICTED -.  Every point is colored by its outcome (TP/FN/FP/TN),
+  // the matrix cells use the same colors, and all five metrics from the notes
+  // update as you drag:
+  //   Accuracy = #right/#total          MisclassError = #wrong/#total
+  //   Recall = TP/(TP+FN)   <->   Specificity = TN/(TN+FP)
+  //   Precision = TP/(TP+FP)
+  // Presets reproduce the four scenario panels in the lecture notes.
+  // ===========================================================================
+
+  // ---- DATA (swap here) -----------------------------------------------------
+  // Three seeded datasets. Glyph = actual class. x drives prediction; y is layout.
+  //   overlap   : + live in x<=0.5, - live in x>=-0.5 (overlap zone [-0.5,0.5])
+  //   separable : gap at x=0  -> "Best case"
+  //   mid       : 5 of each class on each side of x=0 -> everything = 1/2
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      let t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function generateData() {
+    const sets = {};
+    let r = mulberry32(413);
+    sets.overlap = [];
+    for (let i = 0; i < 14; i++) sets.overlap.push({ cls: 1, x: -1.8 + r() * 2.3, y: -1.7 + r() * 3.4 });
+    for (let i = 0; i < 14; i++) sets.overlap.push({ cls: 0, x: -0.5 + r() * 2.3, y: -1.7 + r() * 3.4 });
+    r = mulberry32(631);
+    sets.separable = [];
+    for (let i = 0; i < 10; i++) sets.separable.push({ cls: 1, x: -1.8 + r() * 1.4, y: -1.7 + r() * 3.4 });
+    for (let i = 0; i < 10; i++) sets.separable.push({ cls: 0, x:  0.4 + r() * 1.4, y: -1.7 + r() * 3.4 });
+    r = mulberry32(99);
+    sets.mid = [];
+    for (let i = 0; i < 5; i++) sets.mid.push({ cls: 1, x: -1.7 + r() * 1.4, y: -1.7 + r() * 3.4 });
+    for (let i = 0; i < 5; i++) sets.mid.push({ cls: 0, x: -1.7 + r() * 1.4, y: -1.7 + r() * 3.4 });
+    for (let i = 0; i < 5; i++) sets.mid.push({ cls: 1, x:  0.3 + r() * 1.4, y: -1.7 + r() * 3.4 });
+    for (let i = 0; i < 5; i++) sets.mid.push({ cls: 0, x:  0.3 + r() * 1.4, y: -1.7 + r() * 3.4 });
+    return sets;
+  }
+  // Presets = the four scenario panels in the notes: [dataset, boundary x]
+  const PRESETS = {
+    best:      { set: "separable", b:  0.0  },
+    mid:       { set: "mid",       b:  0.0  },
+    recall:    { set: "overlap",   b:  0.75 },   // all + captured, some - too
+    precision: { set: "overlap",   b: -0.60 }    // predicted-+ side is pure +
+  };
+  // ---------------------------------------------------------------------------
+
+  // outcome colors (points AND matrix cells AND formula terms)
+  const C = { TP: "#2e7d32", FN: "#E69F00", FP: "#C0392B", TN: "#3070B7" };
+
+  const DOM = [-2, 2];
+  const Wp = 380, Hp = 380, M = { top: 34, right: 14, bottom: 14, left: 14 };
+
+  let SETS, DATA, B;              // datasets, current data, boundary x
+  let xS, yS, gPts, gLine;
+  let cellCount = {}, cellRect = {};
+
+  function category(d) {
+    const predPos = d.x < B;
+    if (d.cls === 1) return predPos ? "TP" : "FN";
+    return predPos ? "FP" : "TN";
+  }
+  function counts() {
+    const c = { TP: 0, FN: 0, FP: 0, TN: 0 };
+    DATA.forEach(d => c[category(d)]++);
+    return c;
+  }
+
+  // -------------------------------------------------------------- build
+  function build() {
+    d3.select("#cm-plane").selectAll("*").remove();
+    xS = d3.scaleLinear(DOM, [0, Wp]);
+    yS = d3.scaleLinear(DOM, [Hp, 0]);
+
+    const svg = d3.select("#cm-plane").append("svg")
+      .attr("width", Wp + M.left + M.right).attr("height", Hp + M.top + M.bottom)
+      .append("g").attr("transform", `translate(${M.left},${M.top})`);
+    svg.append("rect").attr("width", Wp).attr("height", Hp)
+      .attr("fill", "#fafafa").attr("stroke", "#999");
+
+    gLine = svg.append("g");
+    gPts = svg.append("g");
+
+    // predicted-side labels (fixed at the top corners)
+    svg.append("text").attr("x", 8).attr("y", -12).attr("font-size", 13).attr("fill", "#555")
+      .text("← predicted +");
+    svg.append("text").attr("x", Wp - 8).attr("y", -12).attr("font-size", 13)
+      .attr("fill", "#555").attr("text-anchor", "end").text("predicted − →");
+
+    // drag anywhere to move the boundary
+    svg.append("rect").attr("width", Wp).attr("height", Hp)
+      .attr("fill", "transparent").style("cursor", "ew-resize")
+      .call(d3.drag().on("start drag", ev => {
+        B = Math.max(DOM[0] + 0.05, Math.min(DOM[1] - 0.05, xS.invert(ev.x)));
+        redraw();
+      }));
+
+    buildMatrix();
+  }
+
+  function buildMatrix() {
+    d3.select("#cm-matrix").selectAll("*").remove();
+    const cw = 92, ch = 74, ox = 78, oy = 58;
+    const svg = d3.select("#cm-matrix").append("svg")
+      .attr("width", ox + 2 * cw + 14).attr("height", oy + 2 * ch + 14)
+      .append("g").attr("transform", `translate(${ox},${oy})`);
+
+    // header labels (same layout as the notes: columns = Predicted, rows = Actual)
+    svg.append("text").attr("x", cw).attr("y", -38).attr("text-anchor", "middle")
+      .attr("font-weight", "bold").text("Predicted");
+    svg.append("text").attr("x", cw / 2).attr("y", -16).attr("text-anchor", "middle").text("Pos");
+    svg.append("text").attr("x", 1.5 * cw).attr("y", -16).attr("text-anchor", "middle").text("Neg");
+    svg.append("text").attr("transform", `translate(${-56},${ch}) rotate(-90)`)
+      .attr("text-anchor", "middle").attr("font-weight", "bold").text("Actual");
+    svg.append("text").attr("x", -14).attr("y", ch / 2 + 4).attr("text-anchor", "end").text("Pos");
+    svg.append("text").attr("x", -14).attr("y", 1.5 * ch + 4).attr("text-anchor", "end").text("Neg");
+
+    const cells = [
+      { k: "TP", col: 0, row: 0 }, { k: "FN", col: 1, row: 0 },
+      { k: "FP", col: 0, row: 1 }, { k: "TN", col: 1, row: 1 }
+    ];
+    cells.forEach(c => {
+      const g = svg.append("g").attr("transform", `translate(${c.col * cw},${c.row * ch})`);
+      cellRect[c.k] = g.append("rect").attr("width", cw).attr("height", ch)
+        .attr("fill", C[c.k]).attr("fill-opacity", 0.14)
+        .attr("stroke", C[c.k]).attr("stroke-width", 2);
+      g.append("text").attr("x", cw / 2).attr("y", 26).attr("text-anchor", "middle")
+        .attr("font-weight", "bold").attr("fill", C[c.k]).text(c.k);
+      cellCount[c.k] = g.append("text").attr("x", cw / 2).attr("y", 52)
+        .attr("text-anchor", "middle").attr("font-size", 18)
+        .attr("font-variant-numeric", "tabular-nums");
+    });
+  }
+
+  // -------------------------------------------------------------- redraw
+  function redraw() {
+    // boundary line + faint region tints
+    gLine.selectAll("rect.reg").data([0, 1]).join("rect").attr("class", "reg")
+      .attr("x", d => d === 0 ? 0 : xS(B)).attr("y", 0)
+      .attr("width", d => d === 0 ? xS(B) : Wp - xS(B)).attr("height", Hp)
+      .attr("fill", d => d === 0 ? C.TP : C.TN).attr("fill-opacity", 0.05);
+    gLine.selectAll("line.b").data([0]).join("line").attr("class", "b")
+      .attr("x1", xS(B)).attr("x2", xS(B)).attr("y1", 0).attr("y2", Hp)
+      .attr("stroke", "#222").attr("stroke-width", 3);
+
+    // points: glyph = actual class, color = outcome
+    gPts.selectAll("text.pt").data(DATA).join("text").attr("class", "pt")
+      .attr("x", d => xS(d.x)).attr("y", d => yS(d.y))
+      .attr("text-anchor", "middle").attr("dominant-baseline", "middle")
+      .attr("font-size", 22).attr("font-weight", "bold")
+      .attr("paint-order", "stroke").attr("stroke", "#fff").attr("stroke-width", 3)
+      .attr("fill", d => C[category(d)])
+      .text(d => d.cls === 1 ? "+" : "−");
+
+    // matrix counts + metrics
+    const c = counts(), n = DATA.length;
+    Object.keys(cellCount).forEach(k => cellCount[k].text(c[k]));
+
+    const rat = (num, den, texNum, texDen) =>
+      den === 0 ? `${texNum}/${texDen} = &ndash;`
+                : `${texNum}/${texDen} = <span class="b">${(num / den).toFixed(3)}</span>`;
+    const s = (k, v) => `<span class="b" style="color:${C[k]}">${v}</span>`;
+    document.getElementById("v-acc").innerHTML =
+      rat(c.TP + c.TN, n, `(${s("TP", c.TP)}+${s("TN", c.TN)})`, n);
+    document.getElementById("v-err").innerHTML =
+      rat(c.FN + c.FP, n, `(${s("FN", c.FN)}+${s("FP", c.FP)})`, n);
+    document.getElementById("v-rec").innerHTML =
+      rat(c.TP, c.TP + c.FN, s("TP", c.TP), `(${s("TP", c.TP)}+${s("FN", c.FN)})`);
+    document.getElementById("v-spec").innerHTML =
+      rat(c.TN, c.TN + c.FP, s("TN", c.TN), `(${s("TN", c.TN)}+${s("FP", c.FP)})`);
+    document.getElementById("v-prec").innerHTML =
+      rat(c.TP, c.TP + c.FP, s("TP", c.TP), `(${s("TP", c.TP)}+${s("FP", c.FP)})`);
+  }
+
+  // -------------------------------------------------------------- controls
+  function applyPreset(name) {
+    const p = PRESETS[name];
+    DATA = SETS[p.set];
+    B = p.b;
+    redraw();
+  }
+
+  function wireControls() {
+    document.querySelectorAll("button[data-preset]").forEach(btn =>
+      btn.addEventListener("click", () => applyPreset(btn.dataset.preset)));
+  }
+
+  function showError(err) {
+    console.error(err);
+    const el = document.createElement("div");
+    el.style.cssText = "background:#ffe2e2;border:1px solid #d33;color:#900;" +
+      "padding:10px 14px;margin:10px 0;border-radius:6px;font-weight:bold;";
+    el.textContent = "Applet error: " + ((err && err.message) || err);
+    document.body.prepend(el);
+  }
+
+  function init() {
+    try {
+      if (typeof d3 === "undefined")
+        throw new Error("d3 did not load — check the d3 <script> tag / your network.");
+      SETS = generateData();
+      DATA = SETS.overlap;
+      B = 0;
+      build();
+      wireControls();
+      redraw();
+      // static formulas: typeset ONCE (live numbers are plain HTML spans)
+      if (window.MathJax && MathJax.startup && MathJax.startup.promise)
+        MathJax.startup.promise.then(() => MathJax.typesetPromise()).catch(() => {});
+    } catch (err) { showError(err); }
+  }
+  window.addEventListener("load", init);
+  </script>
+</head>
+
+<body>
+  <h1>Confusion Matrix</h1>
+  <p style="max-width:860px">The plane below shows points whose marker is the actual class
+     (+ or &minus;); the thick line is a <b>decision boundary</b>: everything to its left is
+     predicted +, everything to its right is predicted &minus;.
+   Drag anywhere on the plane to move the boundary.
+     Each point's <b>color is its outcome</b>, matching the matrix cells.</p>
+
+  <div class="cm-panels">
+    <div class="cm-panel"><h3>Data &amp; decision boundary</h3><div id="cm-plane"></div></div>
+    <div class="cm-panel"><h3>Confusion matrix (live counts)</h3><div id="cm-matrix"></div>
+      <div style="font-size:13px; color:#555; max-width:260px; margin-top:6px">
+        TP = True Positive&nbsp;&middot;&nbsp;FN = False Negative<br>
+        FP = False Positive&nbsp;&middot;&nbsp;TN = True Negative
+      </div>
+    </div>
+  </div>
+
+  <div class="cm-controls">
+    <fieldset>
+      <legend>Scenarios from the notes</legend>
+      <div class="cm-buttons">
+        <button data-preset="best">Best case</button>
+        <button data-preset="mid">Mid case</button>
+        <button data-preset="recall">High recall</button>
+        <button data-preset="precision">High precision</button>
+      </div>
+      <!-- <div class="cm-hint">each loads its data and boundary &mdash; then drag freely</div> -->
+    </fieldset>
+  </div>
+
+  <div class="cm-eq">
+    <div>\( \text{Accuracy} = \dfrac{\#\text{ right}}{\#\text{ total}} \)
+      &nbsp;=&nbsp; <span class="live" id="v-acc"></span></div>
+    <div>\( \text{Misclassification Error} = \dfrac{\#\text{ wrong}}{\#\text{ total}} \)
+      &nbsp;=&nbsp; <span class="live" id="v-err"></span></div>
+    <div>\( \definecolor{tp}{RGB}{46,125,50}\definecolor{fn}{RGB}{230,159,0}
+            \text{Recall} = \dfrac{\textcolor{tp}{\text{TP}}}{\textcolor{tp}{\text{TP}}+\textcolor{fn}{\text{FN}}} \)
+      &nbsp;=&nbsp; <span class="live" id="v-rec"></span>
+      &nbsp;&nbsp;\( \longleftrightarrow \)&nbsp;&nbsp;
+      \( \definecolor{tn}{RGB}{48,112,183}\definecolor{fp}{RGB}{192,57,43}
+         \text{Specificity} = \dfrac{\textcolor{tn}{\text{TN}}}{\textcolor{tn}{\text{TN}}+\textcolor{fp}{\text{FP}}} \)
+      &nbsp;=&nbsp; <span class="live" id="v-spec"></span></div>
+    <div>\( \definecolor{tp}{RGB}{46,125,50}\definecolor{fp}{RGB}{192,57,43}
+            \text{Precision} = \dfrac{\textcolor{tp}{\text{TP}}}{\textcolor{tp}{\text{TP}}+\textcolor{fp}{\text{FP}}} \)
+      &nbsp;=&nbsp; <span class="live" id="v-prec"></span></div>
+    <div style="font-size:14px; color:#444">
+      &bull; <b>Recall:</b> high when FN is low compared to TP
+      &nbsp;&nbsp;&bull; <b>Precision:</b> high when FP is low compared to TP</div>
+  </div>
+
+  <!-- <div class="cm-notes">
+    <b>High recall</b>: can &ldquo;recall&rdquo; all + data (e.g. is a star/comet present?
+    COVID-19 screening). &nbsp;<b>High precision</b>: very precise when predicting +
+    (e.g. detecting that a nuclear plant operator fell asleep).
+    The tradeoff between recall &amp; precision \(\Longrightarrow\) ROC curve.
+    In hypothesis testing, FP is the Type I error and FN the Type II error.
+  </div> -->
+</body>
+</html>

@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ROC Curve + Bayes Optimal Classifier</title>
+  <link rel="stylesheet" href="../styling/global.css">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; color: #222; }
+    h1 { font-size: 24px; }
+    .roc-panels { display: flex; flex-wrap: wrap; gap: 30px; align-items: flex-start; }
+    .roc-panel h3 { font-size: 15px; font-weight: bold; margin: 10px 0 4px 0; }
+    .roc-legend { font-size: 13.5px; color: #444; margin: 2px 0 6px 0; }
+    .roc-legend .sw { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin: 0 5px 0 12px; }
+    .roc-controls { margin: 16px 0; display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; }
+    .roc-controls fieldset { border: 1px solid #ccc; border-radius: 6px; padding: 10px 14px; }
+    .roc-controls legend { font-weight: bold; font-size: 13px; padding: 0 6px; }
+    .roc-row { margin: 6px 0; font-size: 14px; }
+    .roc-row label { display: inline-block; min-width: 88px; }
+    .roc-row input[type="range"] { vertical-align: middle; width: 150px; }
+    .roc-row output { font-variant-numeric: tabular-nums; min-width: 44px; display: inline-block; }
+    .roc-readout { font-variant-numeric: tabular-nums; margin: 8px 0; }
+    .roc-eq { background: #f6f6f8; border: 1px solid #e0e0e6; border-radius: 6px;
+              padding: 12px 16px; margin-top: 12px; font-size: 15px; line-height: 2.0; max-width: 880px; }
+    .roc-hint { font-size: 13px; color: #777; font-style: italic; }
+  </style>
+
+  <script src="https://d3js.org/d3.v7.js"></script>
+  <script>window.MathJax = { tex: { inlineMath: [['\\(', '\\)'], ['$', '$']] }, svg: { fontCache: 'global' } };</script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+
+  <script>
+  // ===========================================================================
+  // ROC curve + Bayes optimal classifier, from the lecture notes:
+  //   P(x|y=0) ~ N(mu0, s0^2),  P(x|y=1) ~ N(mu1, s1^2),  threshold tau:
+  //   x < tau -> predict 0, else predict 1.
+  //   recall(tau) = P(x > tau | y=1),  specificity(tau) = P(x < tau | y=0)
+  //   Acc(tau) = p(y=0) * spec + p(y=1) * recall     (the two integrals)
+  //   Leibniz: d/dtau Acc = p(y=0) p(tau|y=0) - p(y=1) p(tau|y=1)
+  //   -> optimum where the prior-weighted densities INTERSECT
+  //      (equal priors: p(tau|y=0) = p(tau|y=1)).
+  //   AUC for two Gaussians (closed form): Phi((mu1-mu0)/sqrt(s0^2+s1^2)).
+  // ===========================================================================
+
+  // ---- DATA (swap here): defaults straight from the notes' sketch ----------
+  //   mu0=1.5, mu1=3.5, 2*sigma^2=0.8 -> sigma ~ 0.63, equal priors, tau=2.3
+  const DEFAULTS = { m0: 1.5, s0: 0.63, m1: 3.5, s1: 0.63, pi1: 0.5, tau: 2.3 };
+  // ---------------------------------------------------------------------------
+
+  const C = { c0: "#3070B7", c1: "#D55E00", acc: "#377e22", tau: "#111", opt: "#377e22" };
+  const Wd = 500, Hd = 190, Md = { top: 14, right: 16, bottom: 36, left: 16 };
+  const Wa = 500, Ha = 130, Ma = { top: 10, right: 16, bottom: 36, left: 46 };
+  const Wr = 250, Hr = 250, Mr = { top: 14, right: 14, bottom: 42, left: 46 };
+  const NS = 400;
+
+  let P = { ...DEFAULTS };  // current parameters
+  let TAU = DEFAULTS.tau;
+  let el = {};              // d3 selections, created once in buildStatic()
+  let xS, yS, aYS, rXS, rYS;
+
+  // -------------------------------------------------------------- maths
+  function erf(z) {
+    const s = z < 0 ? -1 : 1; z = Math.abs(z);
+    const t = 1 / (1 + 0.3275911 * z);
+    const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t
+              - 0.284496736) * t + 0.254829592) * t * Math.exp(-z * z);
+    return s * y;
+  }
+  const Phi = z => 0.5 * (1 + erf(z / Math.SQRT2));
+  const phi = (x, m, s) => Math.exp(-(x - m) * (x - m) / (2 * s * s)) / (s * Math.sqrt(2 * Math.PI));
+
+  const w0 = x => (1 - P.pi1) * phi(x, P.m0, P.s0);   // p(y=0) p(x|y=0)
+  const w1 = x => P.pi1 * phi(x, P.m1, P.s1);         // p(y=1) p(x|y=1)
+  const recall = t => 1 - Phi((t - P.m1) / P.s1);     // = sensitivity
+  const spec   = t => Phi((t - P.m0) / P.s0);
+  const acc    = t => (1 - P.pi1) * spec(t) + P.pi1 * recall(t);
+  function precision(t) {
+    const num = P.pi1 * recall(t), den = num + (1 - P.pi1) * (1 - spec(t));
+    return den < 1e-12 ? NaN : num / den;
+  }
+  const auc = () => Phi((P.m1 - P.m0) / Math.hypot(P.s0, P.s1));
+
+  function domain() {
+    const lo = Math.min(P.m0 - 3.2 * P.s0, P.m1 - 3.2 * P.s1);
+    const hi = Math.max(P.m0 + 3.2 * P.s0, P.m1 + 3.2 * P.s1);
+    return [lo, hi];
+  }
+  function tauHat() {            // argmax Acc(tau), numeric grid search
+    const [lo, hi] = domain();
+    let best = lo, bv = -1;
+    for (let i = 0; i <= 2000; i++) {
+      const t = lo + (i / 2000) * (hi - lo), v = acc(t);
+      if (v > bv) { bv = v; best = t; }
+    }
+    return best;
+  }
+
+  // -------------------------------------------------------------- static build
+  function buildStatic() {
+    // densities panel
+    const svgD = d3.select("#roc-dens").append("svg")
+      .attr("width", Wd + Md.left + Md.right).attr("height", Hd + Md.top + Md.bottom)
+      .append("g").attr("transform", `translate(${Md.left},${Md.top})`);
+    el.areaL = svgD.append("path").attr("fill", C.c0).attr("fill-opacity", 0.22);
+    el.areaR = svgD.append("path").attr("fill", C.c1).attr("fill-opacity", 0.22);
+    el.curve0 = svgD.append("path").attr("fill", "none").attr("stroke", C.c0).attr("stroke-width", 2.5);
+    el.curve1 = svgD.append("path").attr("fill", "none").attr("stroke", C.c1).attr("stroke-width", 2.5);
+    el.axD = svgD.append("g").attr("transform", `translate(0,${Hd})`);
+    el.mu0 = svgD.append("text").attr("y", Hd + 30).attr("text-anchor", "middle")
+      .attr("fill", C.c0).attr("font-style", "italic").text("μ₀");
+    el.mu1 = svgD.append("text").attr("y", Hd + 30).attr("text-anchor", "middle")
+      .attr("fill", C.c1).attr("font-style", "italic").text("μ₁");
+    el.optD = svgD.append("line").attr("y1", 0).attr("y2", Hd)
+      .attr("stroke", C.opt).attr("stroke-width", 1.5).attr("stroke-dasharray", "5,4");
+    el.optDlab = svgD.append("text").attr("y", 12).attr("text-anchor", "middle")
+      .attr("fill", C.opt).attr("font-style", "italic").attr("font-size", 13).text("τ̂");
+    el.tauD = svgD.append("line").attr("y1", 0).attr("y2", Hd)
+      .attr("stroke", C.tau).attr("stroke-width", 3);
+    el.tauDlab = svgD.append("text").attr("y", 12).attr("text-anchor", "middle")
+      .attr("font-style", "italic").attr("font-size", 14).text("τ");
+    svgD.append("rect").attr("width", Wd).attr("height", Hd)
+      .attr("fill", "transparent").style("cursor", "ew-resize")
+      .call(d3.drag().on("start drag", ev => {
+        const [lo, hi] = domain();
+        TAU = Math.max(lo, Math.min(hi, xS.invert(ev.x)));
+        update();
+      }));
+
+    // Acc(tau) panel (shares the x-scale)
+    const svgA = d3.select("#roc-acc").append("svg")
+      .attr("width", Wa + Ma.left + Ma.right).attr("height", Ha + Ma.top + Ma.bottom)
+      .append("g").attr("transform", `translate(${Ma.left},${Ma.top})`);
+    aYS = d3.scaleLinear([0, 1], [Ha, 0]);
+    svgA.append("g").call(d3.axisLeft(aYS).ticks(3).tickFormat(d3.format(".1f")));
+    el.axA = svgA.append("g").attr("transform", `translate(0,${Ha})`);
+    svgA.append("text").attr("x", Wa / 2).attr("y", Ha + 32).attr("text-anchor", "middle")
+      .attr("font-style", "italic").text("τ");
+    el.accCurve = svgA.append("path").attr("fill", "none").attr("stroke", C.acc).attr("stroke-width", 2.5);
+    el.accStar = svgA.append("path").attr("d", d3.symbol(d3.symbolStar, 110)())
+      .attr("fill", C.opt).attr("stroke", "#fff").attr("stroke-width", 1);
+    el.accDot = svgA.append("circle").attr("r", 5)
+      .attr("fill", C.tau).attr("stroke", "#fff").attr("stroke-width", 1.5);
+
+    // ROC panel — axes exactly as in the notes: Recall vs specificity
+    // (specificity axis runs 1 -> 0 so the dashed diagonal is chance)
+    const svgR = d3.select("#roc-roc").append("svg")
+      .attr("width", Wr + Mr.left + Mr.right).attr("height", Hr + Mr.top + Mr.bottom)
+      .append("g").attr("transform", `translate(${Mr.left},${Mr.top})`);
+    rXS = d3.scaleLinear([1, 0], [0, Wr]);   // reversed: spec = 1 on the left
+    rYS = d3.scaleLinear([0, 1], [Hr, 0]);
+    svgR.append("rect").attr("width", Wr).attr("height", Hr)
+      .attr("fill", "#fafafa").attr("stroke", "#999");
+    svgR.append("g").attr("transform", `translate(0,${Hr})`)
+      .call(d3.axisBottom(rXS).ticks(5).tickFormat(d3.format(".2f")));
+    svgR.append("g").call(d3.axisLeft(rYS).ticks(5).tickFormat(d3.format(".2f")));
+    svgR.append("text").attr("x", Wr / 2).attr("y", Hr + 34).attr("text-anchor", "middle")
+      .text("specificity");
+    svgR.append("text").attr("transform", "rotate(-90)").attr("x", -Hr / 2).attr("y", -32)
+      .attr("text-anchor", "middle").text("Recall");
+    svgR.append("line").attr("x1", rXS(1)).attr("y1", rYS(0))
+      .attr("x2", rXS(0)).attr("y2", rYS(1))
+      .attr("stroke", "#999").attr("stroke-dasharray", "4,3");
+    el.rocCurve = svgR.append("path").attr("fill", "none").attr("stroke", "#222").attr("stroke-width", 2.2);
+    el.rocStar = svgR.append("path").attr("d", d3.symbol(d3.symbolStar, 110)())
+      .attr("fill", C.opt).attr("stroke", "#fff").attr("stroke-width", 1);
+    el.rocDot = svgR.append("circle").attr("r", 5.5)
+      .attr("fill", C.tau).attr("stroke", "#fff").attr("stroke-width", 1.5);
+    el.aucText = svgR.append("text").attr("x", Wr - 10).attr("y", Hr - 10)
+      .attr("text-anchor", "end").attr("font-size", 14).attr("font-variant-numeric", "tabular-nums");
+  }
+
+  // -------------------------------------------------------------- update all
+  function update() {
+    const [lo, hi] = domain();
+    TAU = Math.max(lo, Math.min(hi, TAU));
+    const xs = d3.range(NS + 1).map(i => lo + (i / NS) * (hi - lo));
+    const ymax = d3.max(xs, x => Math.max(w0(x), w1(x))) * 1.12;
+    xS = d3.scaleLinear([lo, hi], [0, Wd]);
+    yS = d3.scaleLinear([0, ymax], [Hd, 0]);
+
+    // densities panel
+    el.axD.call(d3.axisBottom(xS).ticks(7));
+    const line = f => d3.line().x(x => xS(x)).y(x => yS(f(x)))(xs);
+    el.curve0.attr("d", line(w0));
+    el.curve1.attr("d", line(w1));
+    const areaL = d3.area().x(x => xS(x)).y0(yS(0)).y1(x => yS(w0(x)));
+    const areaR = d3.area().x(x => xS(x)).y0(yS(0)).y1(x => yS(w1(x)));
+    el.areaL.attr("d", areaL(xs.filter(x => x <= TAU)));
+    el.areaR.attr("d", areaR(xs.filter(x => x >= TAU)));
+    el.mu0.attr("x", xS(P.m0));
+    el.mu1.attr("x", xS(P.m1));
+    const th = tauHat();
+    el.optD.attr("x1", xS(th)).attr("x2", xS(th));
+    el.optDlab.attr("x", xS(th));
+    el.tauD.attr("x1", xS(TAU)).attr("x2", xS(TAU));
+    el.tauDlab.attr("x", xS(TAU) + 12);
+
+    // Acc(tau) panel (x-scale shared with the densities panel)
+    el.axA.call(d3.axisBottom(xS).ticks(7));
+    el.accCurve.attr("d", d3.line().x(x => xS(x)).y(x => aYS(acc(x)))(xs));
+    el.accStar.attr("transform", `translate(${xS(th)},${aYS(acc(th))})`);
+    el.accDot.attr("cx", xS(TAU)).attr("cy", aYS(acc(TAU)));
+
+    // ROC panel: sweep tau over an extended range so the curve reaches both corners
+    const ts = d3.range(801).map(i => (lo - 2) + (i / 800) * ((hi + 2) - (lo - 2)));
+    el.rocCurve.attr("d", d3.line().x(t => rXS(spec(t))).y(t => rYS(recall(t)))(ts));
+    el.rocStar.attr("transform", `translate(${rXS(spec(th))},${rYS(recall(th))})`);
+    el.rocDot.attr("cx", rXS(spec(TAU))).attr("cy", rYS(recall(TAU)));
+    el.aucText.text("AUC = " + auc().toFixed(3));
+
+    // readout
+    const f3 = v => isNaN(v) ? "–" : v.toFixed(3);
+    const prec = precision(TAU), rec = recall(TAU);
+    const f1 = (isNaN(prec) || prec + rec < 1e-12) ? NaN : 2 * prec * rec / (prec + rec);
+    document.getElementById("ro").innerHTML =
+      `τ = <b>${TAU.toFixed(3)}</b>` +
+      ` &nbsp;|&nbsp; Recall (= sensitivity) = <b>${f3(rec)}</b>` +
+      ` &nbsp;|&nbsp; specificity = <b>${f3(spec(TAU))}</b>` +
+      ` &nbsp;|&nbsp; precision = <b>${f3(prec)}</b>` +
+      ` &nbsp;|&nbsp; F1 = <b>${f3(f1)}</b>` +
+      ` &nbsp;|&nbsp; Acc = <b>${f3(acc(TAU))}</b>` +
+      ` &nbsp;|&nbsp; τ̂ = <b>${th.toFixed(3)}</b> (Acc = ${f3(acc(th))})`;
+  }
+
+  // -------------------------------------------------------------- controls
+  function readParams() {
+    P = {
+      m0:  +document.getElementById("m0").value,
+      s0:  +document.getElementById("s0").value,
+      m1:  +document.getElementById("m1").value,
+      s1:  +document.getElementById("s1").value,
+      pi1: +document.getElementById("pi1").value
+    };
+  }
+  function wireControls() {
+    ["m0", "s0", "m1", "s1", "pi1"].forEach(id => {
+      const inp = document.getElementById(id);
+      inp.addEventListener("input", () => {
+        document.getElementById(id + "Out").value = (+inp.value).toFixed(2);
+        readParams();
+        update();
+      });
+      document.getElementById(id + "Out").value = (+inp.value).toFixed(2);
+    });
+  }
+
+  function showError(err) {
+    console.error(err);
+    const el2 = document.createElement("div");
+    el2.style.cssText = "background:#ffe2e2;border:1px solid #d33;color:#900;" +
+      "padding:10px 14px;margin:10px 0;border-radius:6px;font-weight:bold;";
+    el2.textContent = "Applet error: " + ((err && err.message) || err);
+    document.body.prepend(el2);
+  }
+
+  function init() {
+    try {
+      if (typeof d3 === "undefined")
+        throw new Error("d3 did not load — check the d3 <script> tag / your network.");
+      buildStatic();
+      wireControls();
+      readParams();
+      update();
+      if (window.MathJax && MathJax.startup && MathJax.startup.promise)
+        MathJax.startup.promise.then(() => MathJax.typesetPromise()).catch(() => {});
+    } catch (err) { showError(err); }
+  }
+  window.addEventListener("load", init);
+  </script>
+</head>
+
+<body>
+  <h1>ROC Curve + Bayes Optimal Classifier</h1>
+  <p style="max-width:880px">Two Gaussian class-conditionals,
+     \( P(x \mid y=0) \sim N(\mu_0, \sigma_0^2) \) and \( P(x \mid y=1) \sim N(\mu_1, \sigma_1^2) \),
+     and one threshold \(\tau\): if \(x < \tau\) we predict \(\hat{y}=0\), else \(\hat{y}=1\). Drag anywhere on the density plot to move \(\tau\).
+     The shaded areas are the two accuracy integrals; sweeping \(\tau\) traces out the ROC curve.</p>
+
+  <div class="roc-panels">
+    <div>
+      <div class="roc-panel"><h3>Prior-weighted densities &amp; threshold</h3><div id="roc-dens"></div></div>
+      <div class="roc-legend">
+        <span class="sw" style="background:#3070B7"></span>\( p(y=0)\,p(x \mid y=0) \)
+        <span class="sw" style="background:#D55E00"></span>\( p(y=1)\,p(x \mid y=1) \)
+        &nbsp;&nbsp;shaded = the two Acc integrals&nbsp;&nbsp;
+        <span style="color:#377e22">dashed = \( \hat{\tau} \) (argmax Acc)</span>
+      </div>
+      <div class="roc-panel"><h3>Acc(&tau;) &mdash; accuracy as a function of the threshold</h3><div id="roc-acc"></div></div>
+    </div>
+    <div class="roc-panel">
+      <h3>ROC curve (dot = current &tau;, star = &tau;&#770;)</h3>
+      <div id="roc-roc"></div>
+      <div class="roc-hint" style="max-width:300px">&tau; &rarr; &minus;&infin;: always predict
+        y=1 &rArr; FN &rarr; 0, Recall &rarr; 1, spec &rarr; 0 (top-right).<br>
+        &tau; &rarr; +&infin;: always predict y=0 &rArr; FP &rarr; 0, Recall &rarr; 0,
+        spec &rarr; 1 (bottom-left).</div>
+    </div>
+  </div>
+
+  <div class="roc-readout" id="ro"></div>
+
+  <div class="roc-controls">
+    <fieldset>
+      <legend>Class 0 (blue)</legend>
+      <div class="roc-row"><label>&mu;<sub>0</sub></label>
+        <input type="range" id="m0" min="0" max="3" step="0.05" value="1.5"><output id="m0Out"></output></div>
+      <div class="roc-row"><label>&sigma;<sub>0</sub></label>
+        <input type="range" id="s0" min="0.3" max="1.5" step="0.01" value="0.63"><output id="s0Out"></output></div>
+    </fieldset>
+    <fieldset>
+      <legend>Class 1 (orange)</legend>
+      <div class="roc-row"><label>&mu;<sub>1</sub></label>
+        <input type="range" id="m1" min="1.5" max="5" step="0.05" value="3.5"><output id="m1Out"></output></div>
+      <div class="roc-row"><label>&sigma;<sub>1</sub></label>
+        <input type="range" id="s1" min="0.3" max="1.5" step="0.01" value="0.63"><output id="s1Out"></output></div>
+    </fieldset>
+    <fieldset>
+      <legend>Prior</legend>
+      <div class="roc-row"><label>p(y=1)</label>
+        <input type="range" id="pi1" min="0.05" max="0.95" step="0.05" value="0.5"><output id="pi1Out"></output></div>
+      <div class="roc-hint">equal priors &rArr; &tau;&#770; at the curve intersection;<br>
+        move the prior and watch &tau;&#770; slide off it</div>
+    </fieldset>
+  </div>
+
+  <div class="roc-eq">
+    <div>\( \text{Acc}(\tau) = \displaystyle\int_{-\infty}^{\tau} p(y=0)\,p(x \mid y=0)\,dx
+           + \int_{\tau}^{\infty} p(y=1)\,p(x \mid y=1)\,dx \)</div>
+    <!-- <div>By the Leibniz rule: &nbsp;
+      \( \dfrac{d}{d\tau}\text{Acc}(\tau) = p(y=0)\,p(\tau \mid y=0) - p(y=1)\,p(\tau \mid y=1) \)</div>
+    <div>Set to 0: &nbsp; \( p(y=0)\,p(\hat{\tau} \mid y=0) = p(y=1)\,p(\hat{\tau} \mid y=1) \);
+      &nbsp; with \( p(y=0)=p(y=1)=\tfrac12 \):
+      \( p(\hat{\tau} \mid y=0) = p(\hat{\tau} \mid y=1) \)
+      &nbsp;&rArr;&nbsp; <u>\( \hat{\tau} \) at the intersection</u>.</div>
+    <div style="font-size:14px; color:#444">Ideas: AUC (shown on the ROC panel; for two
+      Gaussians \( \text{AUC} = \Phi\!\big((\mu_1-\mu_0)/\sqrt{\sigma_0^2+\sigma_1^2}\,\big) \)),
+      F1 (in the readout), sensitivity = recall.</div> -->
+  </div>
+</body>
+</html>
