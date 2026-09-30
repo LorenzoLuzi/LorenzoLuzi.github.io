@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bagging, step by step: three bootstraps, three trees, one answer</title>
+  <link rel="stylesheet" href="../styling/global.css">
+
+  <!--
+    SOURCES (kept in source; not displayed in the applet UI)
+    - Data: Palmer penguins (Gorman et al. 2014, CC0), datasets/penguins.csv. A fixed seeded
+      subsample of n = 30 rows per task (classification: 10 per species) so each bootstrap copy is
+      readable.  Regression: (flipper length mm, bill depth mm) -> body mass (kg).
+      Classification: (bill length mm, bill depth mm) -> Adelie / Chinstrap / Gentoo.
+    - Trees: exact greedy CART, depth 2, minimum 3 rows per leaf; split x_f >= t goes right,
+      t = midpoint between consecutive distinct values; regression = RSS, classification = Gini.
+    - Bagging = the recipe in the equation box: B = 3 bootstrap copies (uniform with
+      replacement), one tree each, average (regression) or majority vote (classification).
+      Vote ties (possible with 3 trees and 3 classes) are declared and broken by tree 1.
+  -->
+
+  <style>
+    body { font-family: system-ui, -apple-system, Arial, sans-serif; margin: 24px; color: #222; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    .lead { color: #555; max-width: 96ch; line-height: 1.45; margin-top: 4px; }
+    .controls { text-align: center; margin: 10px 0 8px; }
+    .tbtn { padding: 7px 13px; font-size: 13.5px; margin: 0 2px; cursor: pointer;
+            background: #f0f0f0; border: 1px solid #bbb; border-radius: 6px; }
+    .tbtn.on { background: #0072BD; border-color: #0072BD; color: #fff; }
+    .abtn { padding: 8px 16px; font-size: 14px; margin: 0 4px 0 16px; cursor: pointer;
+            background: #D55E00; border: 1px solid #D55E00; border-radius: 6px; color: #fff; font-weight: 600; }
+
+    .eqbox { background: #f6f6f6; border: 1px solid #e2e2e2; border-radius: 8px; padding: 10px 16px;
+             max-width: 96ch; margin: 6px auto 12px; font-size: 15px; line-height: 1.6; }
+    .eqbox .row { min-height: 2.2em; }
+    .eqbox .lab { display: inline-block; width: 10.5em; color: #666; font-size: 13px; }
+
+    .wrap { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; justify-content: center; }
+    .panel { position: relative; width: 262px; }
+    .panel h3 { font-size: 13.5px; margin: 0 0 2px; font-weight: 600; text-align: center; color: #333; min-height: 1.3em; }
+    .panel .sub { font-size: 11.5px; color: #888; text-align: center; min-height: 2.6em; line-height: 1.3; }
+    svg { overflow: visible; }
+    .frame { fill: none; stroke: #ccc; }
+    .tick text { font-size: 10px; }
+    .axislab { position: absolute; font-size: 11.5px; color: #444; pointer-events: none; white-space: nowrap; }
+
+    .leafbox { stroke: none; opacity: 0.28; }
+    .cut { stroke: #222; stroke-width: 1.4; fill: none; }
+    .dot { stroke: #222; stroke-width: 0.8; }
+    .dot.out { fill: none; stroke: #666; stroke-width: 1; stroke-dasharray: 1.5 1.5; }
+    .qpt { fill: #fff; stroke: #111; stroke-width: 2.2; cursor: move; }
+    .qpt.hot { stroke: #D55E00; }
+    .clickpad { fill: transparent; cursor: crosshair; }
+
+    /* tree diagrams */
+    .tnode rect { fill: #fff; stroke: #999; stroke-width: 1; rx: 4; }
+    .tnode.on rect { stroke: #D55E00; stroke-width: 2.2; }
+    .tnode text { font-size: 10.5px; text-anchor: middle; fill: #222; }
+    .tnode.leaf rect { stroke-width: 1; }
+    .tnode.leaf.on rect { stroke: #D55E00; stroke-width: 2.2; }
+    .tedge { fill: none; stroke: #bbb; stroke-width: 1.4; }
+    .tedge.on { stroke: #D55E00; stroke-width: 2.6; }
+    .elab { font-size: 10px; fill: #777; text-anchor: middle; }
+    .elab.on { fill: #D55E00; font-weight: 700; }
+    .leafval { font-weight: 700; }
+
+    #live { text-align: center; font-size: 19px; min-height: calc(2 * 1.5em); line-height: 1.5; margin: 14px 0 0; }
+    #livesub { text-align: center; font-size: 13px; color: #666; min-height: 1.5em; margin-bottom: 8px; }
+    .slot { position: relative; }
+    .slot .buf { visibility: hidden; position: absolute; left: 0; right: 0; top: 0; }
+    .legend { font-size: 11.5px; color: #444; text-align: center; margin-top: 4px; min-height: 1.4em; }
+    .legend span { display: inline-block; margin: 0 6px; }
+    .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; border: 1px solid #222; margin-right: 4px; vertical-align: -1px; }
+    #footnote { text-align: center; font-size: 13px; color: #777; max-width: 96ch; margin: 12px auto 0; }
+  </style>
+
+  <script>
+    window.MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], packages: { '[+]': ['color'] } },
+      chtml: { matchFontHeight: false, scale: 1.05 }
+    };
+  </script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js"></script>
+  <script src="https://d3js.org/d3.v7.js"></script>
+
+  <script>
+  // ---- DATA (swap here) -----------------------------------------------------
+  // rows = [x1, x2, y]; reg y = body mass (kg); cls y = 0 Adelie, 1 Chinstrap, 2 Gentoo
+  const DATA = {"reg":[[193.0,17.3,3.6],[212.0,14.0,4.875],[187.0,17.3,3.3],[186.0,18.5,3.1],[197.0,18.2,3.75],[187.0,17.1,3.7],[205.0,18.1,4.3],[195.0,17.0,3.65],[201.0,18.1,4.05],[197.0,18.9,4.15],[190.0,17.9,3.325],[209.0,14.2,4.6],[190.0,17.0,3.725],[191.0,18.6,3.7],[213.0,16.1,5.4],[218.0,14.2,5.3],[210.0,18.0,4.0],[230.0,16.3,5.7],[216.0,14.3,4.1],[195.0,18.2,4.4],[185.0,17.0,3.6],[216.0,15.8,4.925],[192.0,18.5,4.1],[218.0,15.2,5.7],[210.0,13.5,4.15],[195.0,18.5,4.25],[216.0,16.1,5.55],[214.0,13.7,4.65],[185.0,16.9,3.0],[228.0,17.3,5.6]],"cls":[[55.9,17.0,2],[48.2,15.6,2],[41.1,18.2,0],[39.0,17.1,0],[46.1,18.2,1],[38.3,19.2,0],[41.5,18.5,0],[47.5,16.8,1],[41.4,18.5,0],[50.8,15.7,2],[44.0,13.6,2],[42.4,17.3,1],[50.5,15.2,2],[46.5,13.5,2],[43.2,16.6,1],[45.8,18.9,0],[55.8,19.8,1],[36.6,17.8,0],[45.3,13.7,2],[38.6,21.2,0],[46.2,14.1,2],[46.3,15.8,2],[45.6,19.4,1],[50.8,19.0,1],[41.3,20.3,0],[51.3,19.9,1],[37.3,17.8,0],[46.4,17.8,1],[46.4,18.6,1],[45.0,15.4,2]]};
+  const TASKS = {
+    reg: { rows: () => DATA.reg, names: ['flipper', 'bill depth'], units: ['flipper length (mm)', 'bill depth (mm)'],
+           ylab: 'body mass (kg)' },
+    cls: { rows: () => DATA.cls, names: ['bill length', 'bill depth'], units: ['bill length (mm)', 'bill depth (mm)'],
+           classes: ['Adelie', 'Chinstrap', 'Gentoo'] }
+  };
+  const B = 3, MAX_DEPTH = 2, MIN_LEAF = 3;
+  const CCOL = ['#E69F00', '#0072B2', '#009E73'];          // class colours (Okabe-Ito)
+  const TCOL = ['#D55E00', '#6A3D9A', '#CC79A7'];          // tree 1, 2, 3
+  const PATHCOL = '#D55E00';
+
+  // ---------------------------------------------------------------------------
+  function mulberry32(s){return function(){s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+  const hexRGB = h => [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)).join(',');
+  const texc = (hex, s) => `\\textcolor[RGB]{${hexRGB(hex.replace('#', ''))}}{${s}}`;
+  const f2 = v => v.toFixed(2).replace('−', '-');
+
+  // ---- MathJax: one chain; live slots are double-buffered (write hidden, typeset, swap) ----
+  function mjRun(els) {
+    window.__mjChain = (window.__mjChain || Promise.resolve())
+      .then(() => { const live = (els || []).filter(e => e && e.isConnected);
+        if (!live.length || !window.MathJax || !MathJax.typesetPromise) return null;
+        return MathJax.typesetPromise(live); })
+      .catch(() => {});
+    return window.__mjChain;
+  }
+  class MathSlot {
+    constructor(host) { this.host = host; this.cur = ''; this.a = document.createElement('div'); this.b = document.createElement('div');
+      this.b.className = 'buf'; host.classList.add('slot'); host.append(this.a, this.b); this.busy = false; this.pending = null; }
+    set(tex) { if (tex === this.cur) return; this.cur = tex; if (this.busy) { this.pending = tex; return; } this._go(tex); }
+    _go(tex) { this.busy = true; this.b.innerHTML = tex;
+      mjRun([this.b]).then(() => { [this.a, this.b] = [this.b, this.a]; this.a.className = ''; this.b.className = 'buf';
+        this.busy = false; if (this.pending) { const p = this.pending; this.pending = null; this._go(p); } }); }
+  }
+  window.MathSlot = MathSlot;
+
+  // ============================ exact greedy CART, 2 features, depth 2 =======
+  function fitTree(rows, isCls, maxDepth, minLeaf) {
+    const impur = seg => {                                // RSS (reg) | n * gini (cls)
+      const m = seg.length;
+      if (isCls) { const cnt = [0, 0, 0]; for (const r of seg) cnt[r[2]]++;
+        return m * (1 - cnt.reduce((a, c) => a + (c / m) ** 2, 0)); }
+      const mean = seg.reduce((a, r) => a + r[2], 0) / m;
+      return seg.reduce((a, r) => a + (r[2] - mean) ** 2, 0);
+    };
+    const leafOf = seg => {
+      const m = seg.length;
+      if (isCls) { const cnt = [0, 0, 0]; for (const r of seg) cnt[r[2]]++;
+        let k = 0; for (let c = 1; c < 3; c++) if (cnt[c] > cnt[k]) k = c;      // majority (ties -> lowest index)
+        return { v: k, n: m, cnt }; }
+      return { v: seg.reduce((a, r) => a + r[2], 0) / m, n: m };
+    };
+    function grow(seg, depth) {
+      if (depth >= maxDepth || seg.length < 2 * minLeaf) return leafOf(seg);
+      const base = impur(seg);
+      if (base <= 1e-12) return leafOf(seg);
+      let best = null;
+      for (const f of [0, 1]) {
+        const a = seg.slice().sort((p, q) => p[f] - q[f]);
+        for (let k = minLeaf; k <= a.length - minLeaf; k++) {
+          if (a[k][f] === a[k - 1][f]) continue;
+          const sc = impur(a.slice(0, k)) + impur(a.slice(k));
+          if (!best || sc < best.sc - 1e-12) best = { sc, f, k, a };
+        }
+      }
+      if (!best || best.sc >= base - 1e-12) return leafOf(seg);
+      const t = (best.a[best.k - 1][best.f] + best.a[best.k][best.f]) / 2;
+      return { f: best.f, t, n: seg.length, l: grow(best.a.slice(0, best.k), depth + 1), r: grow(best.a.slice(best.k), depth + 1) };
+    }
+    return grow(rows, 0);
+  }
+  // path of x through the tree: list of nodes visited (root ... leaf) + the decisions taken
+  function trace(tree, x) {
+    const nodes = [tree], dirs = [];
+    let nd = tree;
+    while (nd.t !== undefined) { const goR = x[nd.f] >= nd.t; dirs.push(goR ? 'r' : 'l'); nd = goR ? nd.r : nd.l; nodes.push(nd); }
+    return { nodes, dirs, leaf: nd };
+  }
+  const predict = (tree, x) => trace(tree, x).leaf.v;
+  // leaf rectangles inside box = [x1lo, x1hi, x2lo, x2hi]
+  function leafBoxes(tree, box, out = []) {
+    if (tree.t === undefined) { out.push({ box, v: tree.v, leaf: tree }); return out; }
+    const [a, b, c, d] = box;
+    if (tree.f === 0) { leafBoxes(tree.l, [a, tree.t, c, d], out); leafBoxes(tree.r, [tree.t, b, c, d], out); }
+    else { leafBoxes(tree.l, [a, b, c, tree.t], out); leafBoxes(tree.r, [a, b, tree.t, d], out); }
+    return out;
+  }
+  function cutsOf(tree, box, out = []) {
+    if (tree.t === undefined) return out;
+    const [a, b, c, d] = box;
+    if (tree.f === 0) { out.push({ x1: tree.t, x2: tree.t, y1: c, y2: d });
+      cutsOf(tree.l, [a, tree.t, c, d], out); cutsOf(tree.r, [tree.t, b, c, d], out); }
+    else { out.push({ x1: a, x2: b, y1: tree.t, y2: tree.t });
+      cutsOf(tree.l, [a, b, c, tree.t], out); cutsOf(tree.r, [a, b, tree.t, d], out); }
+    return out;
+  }
+
+  // ============================ state ========================================
+  const S = { task: 'reg', seed: 1, boots: [], q: null };
+  let UI = null, LIVE = null;
+  const rows = () => TASKS[S.task].rows();
+  const isCls = () => S.task === 'cls';
+
+  function bootstrap() {                              // B copies: n draws uniform with replacement
+    const rng = mulberry32(100 * S.seed + (isCls() ? 7 : 0));
+    const n = rows().length;
+    S.boots = [];
+    for (let b = 0; b < B; b++) {
+      const counts = new Array(n).fill(0);
+      for (let i = 0; i < n; i++) counts[Math.floor(rng() * n)]++;
+      const copy = [];
+      counts.forEach((c, i) => { for (let m = 0; m < c; m++) copy.push(rows()[i]); });
+      S.boots.push({ counts, copy, tree: fitTree(copy, isCls(), MAX_DEPTH, MIN_LEAF) });
+    }
+  }
+
+  // ============================ build ========================================
+  function build() {
+    d3.select('#btnReg').classed('on', !isCls());
+    d3.select('#btnCls').classed('on', isCls());
+    bootstrap();
+    const host = d3.select('#plots'); host.selectAll('*').remove();
+    const T = TASKS[S.task];
+    const pm = { top: 8, right: 10, bottom: 36, left: 40 }, pW = 212, pH = 190;
+    const x1dom = d3.scaleLinear().domain(d3.extent(rows(), r => r[0])).nice().domain();
+    const x2dom = d3.scaleLinear().domain(d3.extent(rows(), r => r[1])).nice().domain();
+    const x = d3.scaleLinear(x1dom, [0, pW]), y = d3.scaleLinear(x2dom, [pH, 0]);
+    let color, ydom = null;
+    if (isCls()) color = k => CCOL[k];
+    else { ydom = d3.scaleLinear().domain(d3.extent(rows(), r => r[2])).nice().domain();
+           const sc = d3.scaleSequential(ydom, d3.interpolateViridis).clamp(true); color = v => sc(v); }
+    if (!S.q || S.q[0] < x1dom[0] || S.q[0] > x1dom[1] || S.q[1] < x2dom[0] || S.q[1] > x2dom[1])
+      S.q = [x1dom[0] + 0.5 * (x1dom[1] - x1dom[0]), x2dom[0] + 0.5 * (x2dom[1] - x2dom[0])];
+    UI = { x, y, pW, pH, pm, color, x1dom, x2dom, ydom, panels: [] };
+
+    for (let p = 0; p <= B; p++) {                     // p = 0: original data; 1..B: bootstrap copies
+      const panel = host.append('div').attr('class', 'panel');
+      panel.append('h3').attr('id', `title${p}`).html(p === 0 ? `the data \\(\\mathcal D\\) (n = ${rows().length})`
+        : `${texcHtml(TCOL[p - 1], `bootstrap copy \\(\\mathcal D^{*${p}}\\)`)} + its tree \\(f_${p}\\)`);
+      const body = panel.append('div').style('position', 'relative');
+      const svg = body.append('svg').attr('width', pW + pm.left + pm.right).attr('height', pH + pm.top + pm.bottom)
+        .append('g').attr('transform', `translate(${pm.left},${pm.top})`);
+      svg.append('g').attr('class', 'tick').attr('transform', `translate(0,${pH})`).call(d3.axisBottom(x).ticks(5));
+      svg.append('g').attr('class', 'tick').call(d3.axisLeft(y).ticks(5));
+      body.append('div').attr('class', 'axislab').style('left', (pm.left + pW / 2) + 'px')
+        .style('top', (pm.top + pH + 28) + 'px').style('transform', 'translate(-50%,-50%)').text(T.units[0]);
+      body.append('div').attr('class', 'axislab').style('left', (pm.left - 30) + 'px')
+        .style('top', (pm.top + pH / 2) + 'px').style('transform', 'translate(-50%,-50%) rotate(-90deg)').text(T.units[1]);
+      const gLeaf = svg.append('g'), gCut = svg.append('g'), gDots = svg.append('g');
+      svg.append('rect').attr('class', 'frame').attr('width', pW).attr('height', pH);
+      const pad = svg.append('rect').attr('class', 'clickpad').attr('width', pW).attr('height', pH);
+      const qpt = svg.append('circle').attr('class', 'qpt').attr('r', 6.5);
+      const setQ = (px, py) => { S.q = [Math.max(x1dom[0], Math.min(x1dom[1], x.invert(px))),
+                                        Math.max(x2dom[0], Math.min(x2dom[1], y.invert(py)))]; renderDynamic(); };
+      pad.on('click', function (ev) { const c = d3.pointer(ev, svg.node()); setQ(c[0], c[1]); });
+      const drag = d3.drag().on('start drag', ev => setQ(ev.x, ev.y));
+      pad.call(drag); qpt.call(drag);
+      const sub = panel.append('div').attr('class', 'sub').attr('id', `sub${p}`);
+      const tree = p ? panel.append('svg').attr('class', 'treesvg').attr('width', 262).attr('height', 150) : null;
+      UI.panels.push({ svg, gLeaf, gCut, gDots, qpt, sub, tree });
+    }
+    // legend / colour key under the whole row
+    const lg = d3.select('#legend');
+    if (isCls()) lg.html(T.classes.map((c, k) => `<span><i style="background:${CCOL[k]}"></i>${c}</span>`).join('') +
+      `<span>· ${sizeKey()}</span>`);
+    else lg.html(`<span>dot colour = ${T.ylab}: <i style="background:${color(ydom[0])}"></i>${ydom[0].toFixed(1)} … <i style="background:${color(ydom[1])}"></i>${ydom[1].toFixed(1)}</span>` +
+      `<span>· ${sizeKey()}</span>`);
+
+    renderStaticEq();
+    renderDynamic();
+    mjRun([document.getElementById('eqbox'), document.getElementById('plots'), document.getElementById('lead')]);
+  }
+  const sizeKey = () => `in a copy, dot size = times drawn: ` +
+    [1, 2, 3].map(k => `<i style="width:${2 * (3 + 1.6 * (k - 1))}px;height:${2 * (3 + 1.6 * (k - 1))}px;background:#999"></i>${k}`).join(' ') +
+    ` <i style="border:1px dashed #666;background:none"></i>not drawn`;
+  const texcHtml = (col, s) => `<span style="color:${col};font-weight:700">${s}</span>`;
+
+  function renderStaticEq() {
+    const n = rows().length;
+    const leafRule = isCls() ? `c_{b\\ell} = \\text{majority class of the copy's rows in } R_{b\\ell}`
+                             : `c_{b\\ell} = \\text{mean of } y \\text{ over the copy's rows in } R_{b\\ell}`;
+    const combine = isCls()
+      ? `\\hat y(\\mathbf x) = \\arg\\max_k \\sum_{b=1}^{3} \\mathbb 1\\big[f_b(\\mathbf x) = k\\big] \\quad\\text{(majority vote)}`
+      : `f_{\\text{bag}}(\\mathbf x) = \\frac{1}{3}\\sum_{b=1}^{3} f_b(\\mathbf x) \\quad\\text{(average)}`;
+    // document.getElementById('eqbox').innerHTML =
+    //   `<div class="row"><span class="lab">1. bootstrap</span>\\(\\mathcal D^{*b} = \\{(\\mathbf x^{*b}_i, y^{*b}_i)\\}_{i=1}^{${n}},\\ ` +
+    //   `\\text{each pair drawn uniformly from } \\mathcal D \\text{ with replacement},\\ b = 1, 2, 3\\)</div>` +
+    //   `<div class="row"><span class="lab">2. one tree per copy</span>\\(f_b(\\mathbf x) = \\sum_{\\ell} c_{b\\ell}\\,\\mathbb 1[\\mathbf x \\in R_{b\\ell}],\\quad ${leafRule}\\)</div>` +
+    //   `<div class="row"><span class="lab">3. aggregate</span>\\(${combine}\\)</div>`;
+  }
+
+  // ============================ dynamic ======================================
+  function renderDynamic() {
+    const { x, y, pW, pH, color, x1dom, x2dom } = UI;
+    const T = TASKS[S.task];
+    const box = [x1dom[0], x1dom[1], x2dom[0], x2dom[1]];
+    const preds = [];
+    UI.panels.forEach((P, p) => {
+      const bt = p ? S.boots[p - 1] : null;
+      P.gLeaf.selectAll('*').remove(); P.gCut.selectAll('*').remove(); P.gDots.selectAll('*').remove();
+      if (bt) {
+        const tr = trace(bt.tree, S.q);
+        for (const L of leafBoxes(bt.tree, box)) {
+          const [a, b, c, d] = L.box;
+          P.gLeaf.append('rect').attr('class', 'leafbox').attr('x', x(a)).attr('y', y(d))
+            .attr('width', x(b) - x(a)).attr('height', y(c) - y(d)).attr('fill', color(L.v))
+            .attr('opacity', L.leaf === tr.leaf ? 0.5 : 0.22);
+        }
+        for (const c of cutsOf(bt.tree, box))
+          P.gCut.append('line').attr('class', 'cut').attr('x1', x(c.x1)).attr('x2', x(c.x2)).attr('y1', y(c.y1)).attr('y2', y(c.y2));
+      }
+      rows().forEach((r, i) => {
+        const k = bt ? bt.counts[i] : 1, out = bt && k === 0;
+        P.gDots.append('circle').attr('class', 'dot' + (out ? ' out' : ''))
+          .attr('cx', x(r[0])).attr('cy', y(r[1])).attr('r', out ? 3 : 3 + (bt ? 1.6 * (k - 1) : 0))
+          .attr('fill', out ? null : color(r[2]));
+      });
+      P.qpt.attr('cx', x(S.q[0])).attr('cy', y(S.q[1]));
+      if (bt) {
+        const tr = trace(bt.tree, S.q);
+        preds.push(tr.leaf);
+        drawTree(P.tree, bt.tree, tr, p - 1);
+        const v = tr.leaf.v;
+        P.sub.html(`your \\(\\mathbf x\\) lands in the shaded leaf (${tr.leaf.n} rows): ` +
+          (isCls() ? `\\(f_${p}(\\mathbf x) = \\text{${T.classes[v]}}\\)` : `\\(f_${p}(\\mathbf x) = ${f2(v)}\\)`));
+      } else {
+        const used = S.boots.map(b => b.counts.filter(c => c > 0).length);
+        P.sub.html(`drag the point: \\(\\mathbf x = (${S.q[0].toFixed(1)},\\ ${S.q[1].toFixed(1)})\\)<br>` +
+          `each copy keeps ${used.join(' / ')} of the ${rows().length} rows`);
+      }
+    });
+    typesetSubsSoon();
+
+    // the aggregate, live
+    let tex, sub;
+    if (isCls()) {
+      const votes = [0, 0, 0]; preds.forEach(L => votes[L.v]++);
+      const mx = Math.max(...votes), winners = votes.map((v, k) => v === mx ? k : -1).filter(k => k >= 0);
+      const yhat = winners.length === 1 ? winners[0] : preds[0].v;
+      tex = `\\(${preds.map((L, b) => texc(TCOL[b], `f_${b + 1}(\\mathbf x) = \\text{${T.classes[L.v]}}`)).join(',\\ ')}` +
+            `\\;\\Rightarrow\\; \\text{votes: } ${T.classes.map((c, k) => `${texc(CCOL[k], `\\text{${c}}`)}\\ ${votes[k]}`).join(',\\ ')}` +
+            `\\;\\Rightarrow\\; \\hat y(\\mathbf x) = ${texc(CCOL[yhat], `\\mathbf{\\text{${T.classes[yhat]}}}`)}\\)`;
+      sub = winners.length === 1 ? `${mx} of 3 trees agree` : `three-way tie; broken in favour of tree 1`;
+      S.yhat = yhat; S.votes = votes;
+    } else {
+      const vs = preds.map(L => L.v), mean = vs.reduce((a, b) => a + b, 0) / B;
+      tex = `\\(f_{\\text{bag}}(\\mathbf x) = \\tfrac13\\big(${vs.map((v, b) => texc(TCOL[b], `f_${b + 1}(\\mathbf x)`)).join(' + ')}\\big)` +
+            ` = \\tfrac13\\big(${vs.map((v, b) => texc(TCOL[b], f2(v))).join(' + ')}\\big) = \\mathbf{${f2(mean)}}\\text{ kg}\\)`;
+      const spread = Math.max(...vs) - Math.min(...vs);
+      // sub = `the three trees disagree by ${f2(spread)} kg here; the average smooths that`;
+      S.fbag = mean;
+    }
+    LIVE = LIVE || new MathSlot(document.getElementById('live'));   // module-level: survives rebuilds
+    LIVE.set(tex);
+    document.getElementById('livesub').textContent = sub;
+
+    window.__api = {
+      state: () => ({ task: S.task, q: S.q.slice(), seed: S.seed, x1dom: x1dom.slice(), x2dom: x2dom.slice(),
+        preds: preds.map(L => L.v), fbag: S.fbag, yhat: S.yhat, votes: S.votes ? S.votes.slice() : null,
+        counts: S.boots.map(b => b.counts.slice()), tex: LIVE.cur }),
+      setQuery: xx => { S.q = xx.slice(); renderDynamic(); },
+      set: task => { S.task = task; S.q = null; build(); },
+      rebootstrap: () => { S.seed++; S.q = null; build(); },
+      rows: () => rows().map(r => r.slice()),
+      trees: () => S.boots.map(b => b.tree),
+      fit: (rs, cls) => fitTree(rs, cls, MAX_DEPTH, MIN_LEAF),
+      trace: (tr, xx) => trace(tr, xx), predict
+    };
+  }
+  let subTimer = null;
+  function typesetSubsSoon() {                         // captions are short; throttle one typeset for all
+    if (subTimer) clearTimeout(subTimer);
+    subTimer = setTimeout(() => mjRun(UI.panels.map(P => P.sub.node())), 90);
+  }
+
+  // ---- tree diagram: root, 2 children, up to 4 leaves; the path of x highlighted ----
+  function drawTree(svg, tree, tr, b) {
+    const T = TASKS[S.task];
+    svg.selectAll('*').remove();
+    const W = 262, levels = [22, 72, 122], NW = 112, NH = 24, LW = 60;
+    const nodeText = nd => nd.t === undefined
+      ? (isCls() ? T.classes[nd.v] : f2(nd.v) + ' kg')
+      : `${T.names[nd.f]} ≥ ${nd.t % 1 === 0 ? nd.t.toFixed(0) : nd.t.toFixed(1)}?`;
+    const onPath = nd => tr.nodes.includes(nd);
+    const place = (nd, depth, cx) => {
+      const leaf = nd.t === undefined, w = leaf ? LW : NW;
+      const g = svg.append('g').attr('class', 'tnode' + (leaf ? ' leaf' : '') + (onPath(nd) ? ' on' : ''))
+        .attr('transform', `translate(${cx},${levels[depth]})`);
+      g.append('rect').attr('x', -w / 2).attr('y', -NH / 2).attr('width', w).attr('height', NH)
+        .attr('fill', leaf ? UI.color(nd.v) : '#fff').attr('fill-opacity', leaf ? 0.35 : 1);
+      g.append('text').attr('y', 4).attr('text-anchor', 'middle').attr('class', leaf ? 'leafval' : '').text(nodeText(nd));
+      if (!leaf) {
+        const span = depth === 0 ? 66 : 32;
+        [['l', -span, 'no'], ['r', span, 'yes']].forEach(([side, dx, lab]) => {
+          const child = nd[side], cx2 = cx + dx, y1 = levels[depth] + NH / 2, y2 = levels[depth + 1] - NH / 2;
+          const on = onPath(nd) && onPath(child);
+          svg.insert('path', ':first-child').attr('class', 'tedge' + (on ? ' on' : ''))
+            .attr('d', `M${cx},${y1} C${cx},${(y1 + y2) / 2} ${cx2},${(y1 + y2) / 2} ${cx2},${y2}`);
+          svg.append('text').attr('text-anchor', 'middle').attr('class', 'elab' + (on ? ' on' : '')).attr('x', (cx + cx2) / 2 + (dx < 0 ? -9 : 9)).attr('y', (y1 + y2) / 2 + 3).text(lab);
+          place(child, depth + 1, cx2);
+        });
+      }
+    };
+    place(tree, 0, W / 2);
+  }
+
+  // ============================ boot ==========================================
+  function main() {
+    if (main.done) return; main.done = true;
+    d3.select('#btnReg').on('click', () => { S.task = 'reg'; S.q = null; build(); });
+    d3.select('#btnCls').on('click', () => { S.task = 'cls'; S.q = null; build(); });
+    d3.select('#btnBoot').on('click', () => { S.seed++; build(); });
+    build();
+  }
+  window.addEventListener('load', main);
+  </script>
+</head>
+<body>
+  <h1>Bagging, step by step: three bootstraps, three trees, one answer</h1>
+  <!-- <p class="lead" id="lead">One dataset, three bootstrap copies of it, one small tree per copy; then average the
+    three (regression) or let them vote (classification). Drag the white point anywhere: each tree shows the
+    two decisions it makes for that \(\mathbf x\), and the bottom line combines the three answers.</p> -->
+
+  <div class="controls">
+    <button id="btnReg" class="tbtn on">Regression — body mass</button>
+    <button id="btnCls" class="tbtn">Classification — species</button>
+    <button id="btnBoot" class="abtn">Draw 3 new bootstrap copies</button>
+  </div>
+
+  <!-- <div class="eqbox" id="eqbox"></div> -->
+
+  <div class="wrap" id="plots"></div>
+  <div class="legend" id="legend"></div>
+
+  <div id="live"></div>
+  <div id="livesub"></div>
+
+  <!-- <p id="footnote">Each copy re-draws 30 rows from the 30 with replacement, so some rows appear twice or three
+    times and about a third are left out; that is the only source of difference between the three trees.
+    The trees are depth 2 (at most 4 leaves), fit on their own bootstrapped dataset. Press the button to
+    re-draw: the cuts jump around, the average and the vote much less.</p> -->
+</body>
+</html>
