@@ -13,12 +13,12 @@ author_profile: true
 
 ## Spring 2026
 - [DSCI 101 - INTRO TO DATA SCIENCE](https://courses.rice.edu/courses/courses/!SWKSCAT.cat?p_action=COURSE&p_term=202620&p_crn=22712)
-  - This course teaching the basics of data science. This is a non-calculus based course with no prior background in statistics or programming required.
-  - Two sectuons: 63 students + 17 students = 80 students total
+  - This course teaches the basics of data science. This is a non-calculus based course with no prior background in statistics or programming required.
+  - Two sections: 63 students + 17 students = 80 students total
 
 ## Fall 2025
 - [DSCI 101 - INTRO TO DATA SCIENCE](https://courses.rice.edu/courses/courses/!SWKSCAT.cat?p_action=COURSE&p_term=202610&p_crn=12124)
-  - This course teaching the basics of data science. This is a non-calculus based course with no prior background in statistics or programming required.
+  - This course teaches the basics of data science. This is a non-calculus based course with no prior background in statistics or programming required.
   - 57 students
 - [COMP 549 901 - DATA SCIENCE PROJECTS](https://courses.rice.edu/courses/courses/!SWKSCAT.cat?p_action=COURSE&p_term=202610&p_crn=13423)
   - This is a capstone course for online masters students studying data science.
@@ -31,13 +31,13 @@ author_profile: true
 
 ## Summer 2025
 - [DSCI 101 - INTRO TO DATA SCIENCE](https://courses.rice.edu/courses/courses/!SWKSCAT.cat?p_action=COURSE&p_term=202530&p_crn=32141)
-  - This course teaching the basics of data science. This is a non-calculus based course with no prior background in statistics or programming required.
+  - This course teaches the basics of data science. This is a non-calculus based course with no prior background in statistics or programming required.
   - Online; 6 students
 
 ## Spring 2025
 
 - [DSCI 101 - INTRO TO DATA SCIENCE](https://courses.rice.edu/courses/courses/!SWKSCAT.cat?p_action=COURSE&p_term=202520&p_crn=24125)
-  - This course teaching the basics of data science. This is a non-calculus based course with no prior background in statistics or programming required.
+  - This course teaches the basics of data science. This is a non-calculus based course with no prior background in statistics or programming required.
   - 59 students
 - [COMP 549 901 - DATA SCIENCE PROJECTS](https://courses.rice.edu/courses/courses/!SWKSCAT.cat?p_action=COURSE&p_term=202520&p_crn=25014)
   - This is a capstone course for online masters students studying data science.
@@ -50,7 +50,7 @@ author_profile: true
 
 ## Fall 2024
 - [DSCI 101 - INTRO TO DATA SCIENCE](https://courses.rice.edu/courses/courses/!SWKSCAT.cat?p_action=COURSE&p_term=202510&p_crn=12785)
-  - This course teaching the basics of data science. This is a non-calculus based course with no prior background in statistics or programming required.
+  - This course teaches the basics of data science. This is a non-calculus based course with no prior background in statistics or programming required.
   - 65 students
 - [COMP 549 901 - DATA SCIENCE PROJECTS](https://courses.rice.edu/courses/courses/!SWKSCAT.cat?p_action=COURSE&p_term=202510&p_crn=16402)
   - This is a capstone course for online masters students studying data science.
