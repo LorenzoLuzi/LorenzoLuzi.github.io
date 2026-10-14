@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gaussians: The Density in 1D, 2D, 3D</title>
+  <link rel="stylesheet" href="../styling/global.css">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; color: #222; }
+    h1 { font-size: 24px; }
+    h2 { font-size: 19px; margin: 26px 0 6px 0; border-bottom: 1px solid #ddd; padding-bottom: 4px; max-width: 980px; }
+    .gx-intro, .gx-eq, .gx-note { max-width: 980px; }
+    .gx-eq { font-size: 15px; margin: 10px 0; }
+    .gx-note { font-size: 13.5px; color: #555; margin: 6px 0; }
+    .gx-controls { margin: 12px 0; display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+    .gx-controls fieldset { border: 1px solid #ccc; border-radius: 6px; padding: 10px 14px; }
+    .gx-controls legend { font-weight: bold; font-size: 13px; padding: 0 6px; }
+    .gx-row { margin: 6px 0; font-size: 14px; }
+    .gx-radio { margin-right: 12px; white-space: nowrap; }
+    .gx-srow { display: flex; align-items: center; gap: 8px; margin: 5px 0; font-size: 14px; }
+    .gx-srow .lab { width: 34px; text-align: right; }
+    .gx-srow input[type="range"] { width: 150px; }
+    .gx-srow .val { width: 44px; font-variant-numeric: tabular-nums; }
+    .gx-main { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; margin: 12px 0; }
+    .gx-main fieldset { border: 1px solid #ccc; border-radius: 6px; padding: 10px 14px; flex: 0 0 auto; }
+    .gx-left { flex: 0 1 auto; }           /* width is set to the plot's width in renderPanelA */
+    .gx-main legend { font-weight: bold; font-size: 13px; padding: 0 6px; }
+    .gx-stage { position: relative; display: inline-block; }
+    .gx-stage svg { display: block; }
+    .gx-stage.threed svg { cursor: grab; }
+    .gx-stage.threed svg:active { cursor: grabbing; }
+    .axl { position: absolute; font-size: 13px; color: #333; pointer-events: none; }
+    .axl-x { transform: translateX(-50%); }
+    .axl-y { transform: translate(-50%, -50%) rotate(-90deg); left: 4px; white-space: nowrap; }
+    .axl3 { position: absolute; font-size: 12px; color: #333; pointer-events: none; transform: translate(-50%, -50%); white-space: nowrap; }
+    .axl-free { position: absolute; font-size: 13px; color: #333; pointer-events: none; transform: translate(-50%, -50%); white-space: nowrap; }
+    .gx-cap { font-size: 14px; margin-top: 8px; max-width: 760px; }
+    .ticktext { font-size: 10px; fill: #555; }
+    .gx-plots { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+    .gx-plot { position: relative; }
+    .gx-plot .ttl { font-size: 14px; margin: 2px 0 2px 46px; }
+    .gx-legend { font-size: 13.5px; margin: 6px 0; max-width: 980px; }
+    .gx-legend .ln { display: inline-block; width: 20px; height: 0; border-top: 3px solid; margin: 0 4px 3px 12px; vertical-align: middle; }
+    .gx-legend .ln.dash { border-top-style: dashed; }
+    body[data-gdim="1"] .dim2, body[data-gdim="1"] .dim3, body[data-gdim="2"] .dim3 { display: none; }
+    body[data-gdim="3"] .only2 { display: none; }
+    .gx-srow .lab.wide { width: 38px; }
+    .gx-pd { font-size: 12.5px; color: #b26a00; margin: 4px 0 0 0; min-height: 16px; max-width: 270px; }
+  </style>
+
+  <script src="https://d3js.org/d3.v7.js"></script>
+  <script>window.MathJax = {
+    tex: { inlineMath: [['\\(', '\\)'], ['$', '$']], packages: { '[+]': ['color'] } },
+    svg: { fontCache: 'global' }
+  };</script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js"></script>
+</head>
+
+<body data-gdim="1">
+  <h1>Gaussians: The Density in 1D, 2D, 3D</h1>
+  <p class="gx-intro">
+    <!-- \(\mu\) and \(\sigma\) are just shape parameters &mdash; location and spread &mdash; and the same
+    object generalizes across dimensions: a curve, then ellipse level sets, then ellipsoid shells.
+    In \(d\) dimensions the spread is a covariance matrix \(\Sigma\) built from the standard
+    deviations \(\sigma_i\) of each coordinate and the correlations \(\rho_{ij}\) between pairs.
+    Drag the 3D view to rotate. -->
+  </p>
+
+  <h2>The density</h2>
+  <div class="gx-eq">
+    \( p(x) = \dfrac{1}{\sqrt{2\pi\sigma^2}}\, e^{-\frac{(x-\mu)^2}{2\sigma^2}} \triangleq N(x;\, \mu, \sigma^2) \)
+    <span class="dim2">&nbsp;&mdash;&nbsp; in \(d\) dimensions
+    \( p(x) = \dfrac{1}{(2\pi)^{d/2} |\Sigma|^{1/2}}\, e^{-\frac12 (x-\mu)^\top \Sigma^{-1} (x-\mu)} \triangleq N(x;\, \mu, \Sigma) \)
+    with</span>
+  </div>
+  <div class="gx-eq dim2" id="gx-sigma-mat"></div>
+
+  <div class="gx-controls">
+    <fieldset>
+      <legend>Dimension of x</legend>
+      <div class="gx-row">
+        <label class="gx-radio"><input type="radio" name="gx-dim" value="1" checked> 1D</label>
+        <label class="gx-radio"><input type="radio" name="gx-dim" value="2"> 2D</label>
+        <label class="gx-radio"><input type="radio" name="gx-dim" value="3"> 3D</label>
+      </div>
+    </fieldset>
+  </div>
+
+  <div class="gx-main">
+    <div class="gx-left">
+      <div class="gx-stage" id="gx-stage">
+        <svg></svg>
+      </div>
+      <div class="gx-cap" id="gx-cap"></div>
+    </div>
+    <fieldset>
+      <legend>Parameters</legend>
+      <div class="gx-srow"><span class="lab">\(\mu_1\)</span><input type="range" id="gx-mu0" min="-4" max="4" step="0.1" value="0"><span class="val" id="gx-mu0v">0.0</span></div>
+      <div class="gx-srow"><span class="lab">\(\sigma_1\)</span><input type="range" id="gx-sd0" min="0.3" max="5" step="0.05" value="1"><span class="val" id="gx-sd0v">1.00</span></div>
+      <div class="gx-srow dim2"><span class="lab">\(\mu_2\)</span><input type="range" id="gx-mu1" min="-4" max="4" step="0.1" value="0"><span class="val" id="gx-mu1v">0.0</span></div>
+      <div class="gx-srow dim2"><span class="lab">\(\sigma_2\)</span><input type="range" id="gx-sd1" min="0.3" max="5" step="0.05" value="1.6"><span class="val" id="gx-sd1v">1.60</span></div>
+      <div class="gx-srow dim3"><span class="lab">\(\mu_3\)</span><input type="range" id="gx-mu2" min="-4" max="4" step="0.1" value="0"><span class="val" id="gx-mu2v">0.0</span></div>
+      <div class="gx-srow dim3"><span class="lab">\(\sigma_3\)</span><input type="range" id="gx-sd2" min="0.3" max="5" step="0.05" value="1"><span class="val" id="gx-sd2v">1.00</span></div>
+      <div class="gx-srow dim2"><span class="lab wide"><span class="only2">\(\rho\)</span><span class="dim3">\(\rho_{12}\)</span></span><input type="range" id="gx-rho" min="-0.9" max="0.9" step="0.05" value="0"><span class="val" id="gx-rhov">0.00</span></div>
+      <div class="gx-srow dim3"><span class="lab wide">\(\rho_{13}\)</span><input type="range" id="gx-rho13" min="-0.9" max="0.9" step="0.05" value="0"><span class="val" id="gx-rho13v">0.00</span></div>
+      <div class="gx-srow dim3"><span class="lab wide">\(\rho_{23}\)</span><input type="range" id="gx-rho23" min="-0.9" max="0.9" step="0.05" value="0"><span class="val" id="gx-rho23v">0.00</span></div>
+      <div class="gx-pd dim3" id="gx-pd"></div>
+    </fieldset>
+  </div>
+
+
+<script>
+"use strict";
+
+// =====================================================================
+// ---- DATA (swap here) ----
+// No data: the density is drawn analytically from the slider parameters.
+// =====================================================================
+const DOM = [-10, 10];                      // fixed axis range, all dims
+const PD_MIN = 0.03;                        // smallest allowed det of the 3x3 correlation matrix
+
+const state = {
+  dim: 1, mu: [0, 0, 0], sd: [1, 1.6, 1],
+  rho: [0, 0, 0],                            // [rho12, rho13, rho23]
+  cam: { yaw: 0.7, pitch: 0.45 },
+};
+
+// =====================================================================
+// Shared helpers
+// =====================================================================
+const stage = document.getElementById("gx-stage");
+const svgA = d3.select(stage.querySelector("svg"));
+const MAR = { l: 50, r: 16, t: 12, b: 40 };
+const CMU = "#1976d2";
+
+// det of the 3x3 correlation matrix [[1,r12,r13],[r12,1,r23],[r13,r23,1]]
+function corrDet(r12, r13, r23) {
+  return 1 - r12 * r12 - r13 * r13 - r23 * r23 + 2 * r12 * r13 * r23;
+}
+// General 3x3 Cholesky factor L (Sigma = L L^T) from sds + the three correlations
+function chol3() {
+  const [s1, s2, s3] = state.sd, [r12, r13, r23] = state.rho;
+  const q = Math.sqrt(1 - r12 * r12);
+  const L21 = r12 * s2, L22 = s2 * q;
+  const L31 = r13 * s3, L32 = s3 * (r23 - r12 * r13) / q;
+  const L33 = s3 * Math.sqrt(Math.max(0, corrDet(r12, r13, r23)) / (1 - r12 * r12));
+  return [[s1, 0, 0], [L21, L22, 0], [L31, L32, L33]];
+}
+
+function typeset(els) {
+  if (window.MathJax && MathJax.typesetPromise) MathJax.typesetPromise(els).catch(() => {});
+}
+function clearStage() {
+  svgA.selectAll("*").remove();
+  for (const el of stage.querySelectorAll(".axl, .axl-y, .axl3, .axl-free")) el.remove();
+  stage.classList.remove("threed");
+}
+function addLabel(cls, latex, left, top) {   // positioned MathJax label
+  const sp = document.createElement("span");
+  sp.className = cls;
+  sp.style.left = left + "px"; sp.style.top = top + "px";
+  sp.innerHTML = latex;
+  stage.appendChild(sp);
+  typeset([sp]);
+  return sp;
+}
+const fmt1 = v => v.toFixed(1), fmt2 = v => v.toFixed(2);
+
+function dens1(x, m, s) { return Math.exp(-0.5 * ((x - m) / s) ** 2) / (Math.sqrt(2 * Math.PI) * s); }
+
+// 2x2 covariance eigen-geometry for the (x1,x2) block
+function ellipseGeom() {
+  const [s1, s2] = state.sd, r = state.rho[0];
+  const a = s1 * s1, b = r * s1 * s2, c = s2 * s2;
+  const th = 0.5 * Math.atan2(2 * b, a - c);
+  const half = Math.sqrt(((a - c) / 2) ** 2 + b * b);
+  return { th, l1: Math.sqrt((a + c) / 2 + half), l2: Math.sqrt((a + c) / 2 - half) };
+}
+
+// =====================================================================
+// Panel A: 1D curve / 2D contours / 3D ellipsoid wireframe
+// =====================================================================
+let g2dCache = null;                         // persistent nodes for cheap slider updates
+
+function render1D() {
+  const W = 640, H = 360; svgA.attr("width", W).attr("height", H);
+  const cw = W - MAR.l - MAR.r, ch = H - MAR.t - MAR.b;
+  const g = svgA.append("g").attr("transform", `translate(${MAR.l},${MAR.t})`);
+  const xs = d3.scaleLinear().domain(DOM).range([0, cw]);
+  const ymax = dens1(0, 0, 0.3) * 1.08;      // peak at the smallest slider sigma
+  const ys = d3.scaleLinear().domain([0, ymax]).range([ch, 0]);
+  const m = state.mu[0], s = state.sd[0];
+
+  const grid = d3.range(401).map(i => DOM[0] + (DOM[1] - DOM[0]) * i / 400);
+  g.append("path")
+    .attr("d", d3.line().x(x => xs(x)).y(x => ys(dens1(x, m, s)))(grid) +
+      `L${xs(DOM[1])},${ys(0)}L${xs(DOM[0])},${ys(0)}Z`)
+    .attr("fill", CMU).attr("fill-opacity", 0.12).attr("stroke", "none");
+  g.append("path")
+    .attr("d", d3.line().x(x => xs(x)).y(x => ys(dens1(x, m, s)))(grid))
+    .attr("fill", "none").attr("stroke", CMU).attr("stroke-width", 2.4);
+  // mu marker (dashed vertical to the peak)
+  g.append("line").attr("x1", xs(m)).attr("x2", xs(m)).attr("y1", ys(0)).attr("y2", ys(dens1(m, m, s)))
+    .attr("stroke", "#555").attr("stroke-dasharray", "4,3");
+  // sigma interval at the inflection height, like the notes' sketch
+  const yInf = ys(dens1(m + s, m, s));
+  g.append("line").attr("x1", xs(m)).attr("x2", xs(m + s)).attr("y1", yInf).attr("y2", yInf)
+    .attr("stroke", "#555").attr("stroke-width", 2);
+  g.append("line").attr("x1", xs(m + s)).attr("x2", xs(m + s)).attr("y1", yInf - 4).attr("y2", yInf + 4)
+    .attr("stroke", "#555").attr("stroke-width", 2);
+  addLabel("axl-free", "\\(\\mu\\)", MAR.l + xs(m), MAR.t + ch + 12);
+  addLabel("axl-free", "\\(\\sigma\\)", MAR.l + xs(m + s / 2), MAR.t + yInf - 12);
+
+  g.append("g").attr("transform", `translate(0,${ch})`).call(d3.axisBottom(xs).ticks(9).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  g.append("g").call(d3.axisLeft(ys).ticks(5).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  addLabel("axl axl-x", "\\(x\\)", MAR.l + cw / 2, H - 14);
+  addLabel("axl axl-y", "\\(p(x)\\)", 4, MAR.t + ch / 2);
+}
+
+function render2D() {
+  const W = 560, H = 520; svgA.attr("width", W).attr("height", H);
+  const cw = W - MAR.l - MAR.r, ch = H - MAR.t - MAR.b;
+  const g = svgA.append("g").attr("transform", `translate(${MAR.l},${MAR.t})`);
+  const xs = d3.scaleLinear().domain(DOM).range([0, cw]);
+  const ys = d3.scaleLinear().domain(DOM).range([ch, 0]);
+  const gCont = g.append("g"), gEll = g.append("g");
+
+  g.append("g").attr("transform", `translate(0,${ch})`).call(d3.axisBottom(xs).ticks(9).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  g.append("g").call(d3.axisLeft(ys).ticks(9).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  addLabel("axl axl-x", "\\(x_1\\)", MAR.l + cw / 2, H - 14);
+  addLabel("axl axl-y", "\\(x_2\\)", 4, MAR.t + ch / 2);
+
+  g2dCache = { gCont, gEll, xs, ys, cw, ch };
+  update2D();
+}
+
+function update2D() {
+  const { gCont, gEll, xs, ys, cw, ch } = g2dCache;
+  const [m1, m2] = state.mu, [s1, s2] = state.sd, r = state.rho[0];
+  const det = (1 - r * r) * s1 * s1 * s2 * s2;
+  const G = 90, vals = new Array(G * G);
+  for (let row = 0; row < G; row++) {
+    const y = DOM[0] + (DOM[1] - DOM[0]) * (row + 0.5) / G;
+    for (let col = 0; col < G; col++) {
+      const x = DOM[0] + (DOM[1] - DOM[0]) * (col + 0.5) / G;
+      const dx = (x - m1) / s1, dy = (y - m2) / s2;
+      const q = (dx * dx - 2 * r * dx * dy + dy * dy) / (1 - r * r);
+      vals[row * G + col] = Math.exp(-0.5 * q) / (2 * Math.PI * Math.sqrt(det));
+    }
+  }
+  const peak = 1 / (2 * Math.PI * Math.sqrt(det));
+  const levels = [0.03, 0.1, 0.2, 0.35, 0.5, 0.65, 0.8, 0.92].map(t => t * peak);
+  const conts = d3.contours().size([G, G]).thresholds(levels)(vals);
+  gCont.selectAll("path").data(conts).join("path")
+    .attr("transform", `scale(${cw / G},${-ch / G}) translate(0,${-G})`)
+    .attr("d", d3.geoPath())
+    .attr("fill", (d, i) => d3.interpolateBlues(0.15 + 0.75 * i / (levels.length - 1)))
+    .attr("stroke", "none");
+  // 1 and 2 sigma ellipses + mean cross
+  const eg = ellipseGeom();
+  const px = (DOM[1] - DOM[0]);
+  const ell = gEll.selectAll("ellipse").data([1, 2]).join("ellipse")
+    .attr("cx", 0).attr("cy", 0)
+    .attr("rx", d => d * eg.l1 / px * cw).attr("ry", d => d * eg.l2 / px * ch)
+    .attr("fill", "none").attr("stroke", "#212121")
+    .attr("stroke-width", d => d === 1 ? 2 : 1.2).attr("stroke-dasharray", "5,3")
+    .attr("transform", `translate(${xs(m1)},${ys(m2)}) rotate(${-eg.th * 180 / Math.PI})`);
+  gEll.selectAll("line").data([[-6, 0, 6, 0], [0, -6, 0, 6]]).join("line")
+    .attr("x1", d => xs(m1) + d[0]).attr("y1", d => ys(m2) + d[1])
+    .attr("x2", d => xs(m1) + d[2]).attr("y2", d => ys(m2) + d[3])
+    .attr("stroke", "#212121").attr("stroke-width", 2);
+}
+
+function render3D() {
+  const W = 620, H = 500; svgA.attr("width", W).attr("height", H);
+  stage.classList.add("threed");
+  const toCube = v => v.map(x => x / DOM[1]);
+
+  const gEdges = svgA.append("g"), gWire = svgA.append("g");
+  const labels = ["\\(x_1\\)", "\\(x_2\\)", "\\(x_3\\)"].map(t => addLabel("axl3", t, 0, 0));
+
+  function shells() {                        // 1s and 2s ellipsoid wireframes
+    const mu = state.mu, A = chol3();        // Sigma = A A^T, general (all three correlations)
+    const map = (u, m) => {                  // unit-sphere point -> cube coords
+      const w = [
+        mu[0] + m * A[0][0] * u[0],
+        mu[1] + m * (A[1][0] * u[0] + A[1][1] * u[1]),
+        mu[2] + m * (A[2][0] * u[0] + A[2][1] * u[1] + A[2][2] * u[2]),
+      ];
+      return toCube(w);
+    };
+    const out = [];
+    for (const m of [1, 2]) {
+      for (const phi of [-60, -30, 0, 30, 60]) {
+        const ph = phi * Math.PI / 180, circ = [];
+        for (let i = 0; i <= 48; i++) {
+          const th = 2 * Math.PI * i / 48;
+          circ.push(map([Math.cos(ph) * Math.cos(th), Math.cos(ph) * Math.sin(th), Math.sin(ph)], m));
+        }
+        out.push({ circ, m });
+      }
+      for (let k = 0; k < 6; k++) {
+        const th0 = Math.PI * k / 6, circ = [];
+        for (let i = 0; i <= 48; i++) {
+          const ph = 2 * Math.PI * i / 48;
+          circ.push(map([Math.cos(ph) * Math.cos(th0), Math.cos(ph) * Math.sin(th0), Math.sin(ph)], m));
+        }
+        out.push({ circ, m });
+      }
+    }
+    return out;
+  }
+
+  function proj(gp, cam) {
+    const c = Math.cos(cam.yaw), s = Math.sin(cam.yaw);
+    const sp = Math.sin(cam.pitch), cp = Math.cos(cam.pitch);
+    const u = gp[0] * c - gp[1] * s, v = gp[0] * s + gp[1] * c, z = gp[2];
+    const k = W * 0.30, cx = W / 2, cy = H * 0.52;
+    return [cx + k * u, cy - k * (v * sp + z * cp), v * cp - z * sp];
+  }
+
+  function draw() {
+    const cam = state.cam;
+    gEdges.selectAll("*").remove();
+    for (const a of [-1, 1]) for (const b of [-1, 1]) for (const ax of [0, 1, 2]) {
+      const p1 = [0, 0, 0], p2 = [0, 0, 0];
+      const oth = [0, 1, 2].filter(t => t !== ax);
+      p1[oth[0]] = a; p1[oth[1]] = b; p2[oth[0]] = a; p2[oth[1]] = b;
+      p1[ax] = -1; p2[ax] = 1;
+      const q1 = proj(p1, cam), q2 = proj(p2, cam);
+      gEdges.append("line").attr("x1", q1[0]).attr("y1", q1[1]).attr("x2", q2[0]).attr("y2", q2[1])
+        .attr("stroke", "#ddd");
+    }
+    [[1.25, 0, -1], [0, 1.25, -1], [0, 0, 1.2]].forEach((pos, j) => {
+      const q = proj([j === 0 ? 1.25 : 0, j === 1 ? 1.25 : 0, j === 2 ? 1.2 : -1], cam);
+      labels[j].style.left = q[0] + "px"; labels[j].style.top = q[1] + "px";
+    });
+    gWire.selectAll("*").remove();
+    for (const { circ, m } of shells()) {
+      gWire.append("path")
+        .attr("d", "M" + circ.map(v => { const q = proj(v, cam); return `${q[0].toFixed(1)},${q[1].toFixed(1)}`; }).join("L"))
+        .attr("fill", "none").attr("stroke", CMU)
+        .attr("stroke-width", m === 1 ? 1.5 : 1).attr("opacity", m === 1 ? 0.95 : 0.45);
+    }
+  }
+  draw();
+  render3D.redraw = draw;
+
+  let raf = false;
+  svgA.call(d3.drag().on("drag", ev => {
+    state.cam.yaw += ev.dx * 0.008;
+    state.cam.pitch = Math.max(0.1, Math.min(1.4, state.cam.pitch + ev.dy * 0.008));
+    if (!raf) { raf = true; requestAnimationFrame(() => { raf = false; draw(); }); }
+  }));
+}
+
+const CAPS_A = {
+  1: "",
+  2: "Level sets are ellipses centered at \\(\\mu\\) (dashed: 1\\(\\sigma\\) and 2\\(\\sigma\\)). " +
+     "With \\(\\rho = 0\\) they are axis-aligned with radii \\(\\sigma_1, \\sigma_2\\); ",
+  3: "Level sets are ellipsoids (1\\(\\sigma\\) and 2\\(\\sigma\\) shells). With all " +
+     "\\(\\rho_{ij} = 0\\) they are axis-aligned with semi-axes \\(\\sigma_1, \\sigma_2, \\sigma_3\\); " +
+     "Not every triple is allowed: " +
+     "\\(\\Sigma\\) must stay positive definite, so a slider stops where the other two constrain it.",
+};
+
+function renderPanelA() {
+  clearStage();
+  if (state.dim === 1) render1D();
+  else if (state.dim === 2) render2D();
+  else render3D();
+  stage.parentElement.style.width = svgA.attr("width") + "px";   // caption wraps under the plot
+  const cap = document.getElementById("gx-cap");
+  cap.innerHTML = CAPS_A[state.dim];
+  typeset([cap]);
+  document.body.dataset.gdim = state.dim;
+}
+
+// live Sigma matrix readout: symbolic definition = current numbers (throttled retypeset)
+let sigTimer = null;
+const f2 = v => v.toFixed(2);
+function sigmaTeX() {
+  const [s1, s2, s3] = state.sd, [r12, r13, r23] = state.rho;
+  const c12 = f2(r12 * s1 * s2), c13 = f2(r13 * s1 * s3), c23 = f2(r23 * s2 * s3);
+  if (state.dim === 2) {
+    return `\\( \\Sigma = \\begin{pmatrix} \\sigma_1^2 & \\rho\\,\\sigma_1\\sigma_2 \\\\ ` +
+      `\\rho\\,\\sigma_1\\sigma_2 & \\sigma_2^2 \\end{pmatrix}` +
+      ` = \\begin{pmatrix} ${f2(s1 * s1)} & ${c12} \\\\ ${c12} & ${f2(s2 * s2)} \\end{pmatrix} \\)`;
+  }
+  return `\\( \\Sigma = \\begin{pmatrix} ` +
+    `\\sigma_1^2 & \\rho_{12}\\,\\sigma_1\\sigma_2 & \\rho_{13}\\,\\sigma_1\\sigma_3 \\\\ ` +
+    `\\rho_{12}\\,\\sigma_1\\sigma_2 & \\sigma_2^2 & \\rho_{23}\\,\\sigma_2\\sigma_3 \\\\ ` +
+    `\\rho_{13}\\,\\sigma_1\\sigma_3 & \\rho_{23}\\,\\sigma_2\\sigma_3 & \\sigma_3^2 \\end{pmatrix}` +
+    ` = \\begin{pmatrix} ${f2(s1 * s1)} & ${c12} & ${c13} \\\\ ` +
+    `${c12} & ${f2(s2 * s2)} & ${c23} \\\\ ${c13} & ${c23} & ${f2(s3 * s3)} \\end{pmatrix} \\)`;
+}
+function updateSigma() {
+  if (state.dim === 1) return;
+  clearTimeout(sigTimer);
+  sigTimer = setTimeout(() => {
+    const el = document.getElementById("gx-sigma-mat");
+    el.innerHTML = sigmaTeX();
+    typeset([el]);
+  }, 150);
+}
+
+// Positive definiteness: with the other two correlations fixed, the allowed
+// interval for the third is  r_a r_b +/- sqrt((1 - r_a^2)(1 - r_b^2) - PD_MIN).
+const RHO_IDS = ["gx-rho", "gx-rho13", "gx-rho23"];     // -> state.rho[0..2] = rho12, rho13, rho23
+const RHO_NAMES = ["\\rho_{12}", "\\rho_{13}", "\\rho_{23}"];
+function rhoBounds(k) {
+  const [a, b] = [0, 1, 2].filter(i => i !== k).map(i => state.rho[i]);
+  const half = Math.sqrt(Math.max(0, (1 - a * a) * (1 - b * b) - PD_MIN));
+  const step = 0.05;
+  const lo = Math.max(-0.9, +(Math.ceil((a * b - half) / step - 1e-9) * step).toFixed(2));
+  const hi = Math.min(0.9, +(Math.floor((a * b + half) / step + 1e-9) * step).toFixed(2));
+  return [lo, hi];
+}
+function setRho(k, v) {                      // clamp so Sigma stays PD; returns the value used
+  const [lo, hi] = rhoBounds(k);
+  const c = Math.min(hi, Math.max(lo, v));
+  state.rho[k] = c;
+  const note = document.getElementById("gx-pd");
+  if (note) {
+    note.innerHTML = (c !== v)
+      ? `\\(${RHO_NAMES[k]}\\) limited to [${f2(lo)}, ${f2(hi)}] so that \\(\\Sigma\\) stays positive definite.`
+      : "";
+    if (c !== v) typeset([note]);
+  }
+  return c;
+}
+
+// =====================================================================
+// Wiring
+// =====================================================================
+function main() {
+  if (main.done) return;                     // jsdom fires load twice
+  main.done = true;
+
+  for (const r of document.querySelectorAll('input[name="gx-dim"]')) {
+    r.addEventListener("change", () => { if (r.checked) { state.dim = +r.value; renderPanelA(); updateSigma(); } });
+  }
+  const redraw = () => {
+    if (state.dim === 1) renderPanelA();
+    else if (state.dim === 2) update2D();
+    else if (render3D.redraw) render3D.redraw();
+    updateSigma();
+  };
+  const bind = (id, fn, fmt, valId) => {
+    const el = document.getElementById(id);
+    el.addEventListener("input", () => {
+      const used = fn(+el.value);
+      if (used !== undefined && used !== +el.value) el.value = used;   // clamped
+      document.getElementById(valId).textContent = fmt(+el.value);
+      redraw();
+    });
+  };
+  bind("gx-mu0", v => { state.mu[0] = v; }, fmt1, "gx-mu0v");
+  bind("gx-sd0", v => { state.sd[0] = v; }, fmt2, "gx-sd0v");
+  bind("gx-mu1", v => { state.mu[1] = v; }, fmt1, "gx-mu1v");
+  bind("gx-sd1", v => { state.sd[1] = v; }, fmt2, "gx-sd1v");
+  bind("gx-mu2", v => { state.mu[2] = v; }, fmt1, "gx-mu2v");
+  bind("gx-sd2", v => { state.sd[2] = v; }, fmt2, "gx-sd2v");
+  RHO_IDS.forEach((id, k) => bind(id, v => setRho(k, v), fmt2, id + "v"));
+
+  renderPanelA();
+  updateSigma();
+
+  window.__gxApi = {
+    setDim: d => { state.dim = d; document.querySelector(`input[name="gx-dim"][value="${d}"]`).checked = true; renderPanelA(); updateSigma(); },
+    setParam: (k, i, v) => {
+      const used = (k === "rho") ? setRho(i, v) : (state[k][i] = v);
+      renderPanelA(); updateSigma();
+      return used;
+    },
+    ellipseGeom, chol3, corrDet, rhoBounds, sigmaTeX, state,
+  };
+}
+window.addEventListener("load", main);
+</script>
+
+<!--
+  HOW IT WORKS (matches the course notes)
+  - Density: p(x) = N(x; mu, sigma^2); the semicolon reads "given", with the
+    parameters fixed (non-random). 2D/3D use N(x; mu, Sigma) with Sigma written
+    two ways on the page: symbolically, Sigma_ii = sigma_i^2 and
+    Sigma_ij = rho_ij sigma_i sigma_j, and numerically from the sliders.
+  - 2D: one correlation rho; level sets are the eigen-geometry of the 2x2 Sigma
+    (1s and 2s ellipses).
+  - 3D: fully general Sigma with rho12, rho13, rho23 (nothing is assumed
+    independent). Shells = unit-sphere circles pushed through the Cholesky
+    factor L of Sigma (chol3), 1s and 2s. Sigma must be positive definite:
+    det of the correlation matrix = 1 - r12^2 - r13^2 - r23^2 + 2 r12 r13 r23 > 0,
+    so each rho slider is clamped to the interval the other two leave open
+    (r_a r_b +/- sqrt((1-r_a^2)(1-r_b^2) - PD_MIN)); a note says when it bites.
+  - No data: everything is analytic from the slider parameters.
+
+  SOURCES (kept in source; not displayed in the applet UI)
+  - Course notes: univariate and multivariate Gaussian density, covariance
+    matrix in terms of standard deviations and correlations.
+-->
+</body>
+</html>

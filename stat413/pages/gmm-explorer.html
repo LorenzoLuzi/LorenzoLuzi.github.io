@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gaussian Mixture Models: a Sandbox</title>
+  <link rel="stylesheet" href="../styling/global.css">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; color: #222; }
+    h1 { font-size: 24px; }
+    .gm-intro, .gm-eq { max-width: 980px; }
+    .gm-eq { font-size: 15px; margin: 10px 0; }
+    .gm-controls { margin: 12px 0; display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; }
+    .gm-controls fieldset { border: 1px solid #ccc; border-radius: 6px; padding: 8px 12px; }
+    .gm-controls legend { font-weight: bold; font-size: 13px; padding: 0 6px; }
+    .gm-row { margin: 5px 0; font-size: 14px; }
+    .gm-radio { margin-right: 10px; white-space: nowrap; }
+    .gm-srow { display: flex; align-items: center; gap: 7px; margin: 4px 0; font-size: 13.5px; }
+    .gm-srow .lab { width: 30px; text-align: right; }
+    .gm-srow input[type="range"] { width: 120px; }
+    .gm-srow .val { width: 40px; font-variant-numeric: tabular-nums; }
+    .gm-stage { position: relative; display: inline-block; }
+    .gm-stage svg { display: block; }
+    .gm-stage.threed svg { cursor: grab; position: relative; z-index: 1; }
+    .gm-stage canvas { position: absolute; left: 0; top: 0; }
+    .gm-stage.threed svg:active { cursor: grabbing; }
+    .axl { position: absolute; font-size: 13px; color: #333; pointer-events: none; }
+    .axl-x { transform: translateX(-50%); }
+    .axl-y { transform: translate(-50%, -50%) rotate(-90deg); left: 4px; white-space: nowrap; }
+    .axl3 { position: absolute; font-size: 12px; color: #333; pointer-events: none; transform: translate(-50%, -50%); white-space: nowrap; }
+    .axl-free { position: absolute; font-size: 12.5px; color: #333; pointer-events: none; transform: translate(0, -50%); white-space: nowrap; }
+    .gm-cap { font-size: 14px; margin-top: 8px; max-width: 780px; }
+    .gm-legend { font-size: 13.5px; margin: 6px 0; }
+    .gm-legend .sw { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin: 0 4px 0 14px; vertical-align: -1px; }
+    .gm-legend .ln { display: inline-block; width: 20px; height: 0; border-top: 3px solid; margin: 0 4px 3px 14px; vertical-align: middle; }
+    .gm-legend .ln.dash { border-top-style: dashed; }
+    .ticktext { font-size: 10px; fill: #555; }
+    .gm-hover { margin-top: 10px; font-size: 13.5px; max-width: 780px; }
+    .gm-hover table { border-collapse: collapse; margin-top: 4px; }
+    .gm-hover th, .gm-hover td { border: 1px solid #ddd; padding: 3px 10px; text-align: right; font-variant-numeric: tabular-nums; }
+    .gm-hover th { background: #f7f7f7; font-weight: normal; }
+    .gm-hover td:first-child, .gm-hover th:first-child { text-align: left; }
+    .gm-hover tr.win td { background: #fff8dc; font-weight: bold; }
+    .gm-hover .hint { color: #777; font-size: 12.5px; }
+    body[data-gm="1"] .c1, body[data-gm="1"] .c2, body[data-gm="2"] .c2 { display: none; }
+    body[data-gdim="1"] .dim2, body[data-gdim="1"] .dim3, body[data-gdim="2"] .dim3 { display: none; }
+    body:not([data-gdim="1"]) .t1only { display: none; }
+  </style>
+
+  <script src="https://d3js.org/d3.v7.js"></script>
+  <script>window.MathJax = {
+    tex: { inlineMath: [['\\(', '\\)'], ['$', '$']] },
+    svg: { fontCache: 'global' }
+  };</script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</head>
+
+<body data-gm="1" data-gdim="1">
+  <h1>Gaussian Mixture Models: a Sandbox</h1>
+  <p class="gm-intro">
+    A single Gaussian is fully determined by its mean and sd &mdash; so it can never be bimodal, boxy,
+    or skewed, <em>even when those shapes have exactly the same mean and sd</em>. A <b>mixture</b> of
+    Gaussians can.
+  </p>
+
+  <div class="gm-eq">
+    \( p(x) = \sum_{m=1}^{M} \pi_m\, N(x;\, \mu_m, \sigma_m^2), \qquad
+    \pi_m \ge 0,\ \sum_m \pi_m = 1. \qquad
+    \gamma_m(x) = \dfrac{\pi_m N(x;\, \mu_m, \sigma_m^2)}{\sum_{j=1}^{M} \pi_j N(x;\, \mu_j, \sigma_j^2)} \)
+    <div class="gm-note" style="font-size:13px; color:#555; margin-top:4px">
+      \(\gamma_m(x)\) is the responsibility of component \(m\) at \(x\): its weighted curve height
+      there as a fraction of the total mixture height \(p(x)\); the \(\gamma_m(x)\) sum to 1 over \(m\).
+    </div>
+  </div>
+
+  <div class="gm-controls">
+    <fieldset>
+      <legend>Dimension of x</legend>
+      <div class="gm-row">
+        <label class="gm-radio"><input type="radio" name="gm-dim" value="1" checked> 1D</label>
+        <label class="gm-radio"><input type="radio" name="gm-dim" value="2"> 2D</label>
+        <label class="gm-radio"><input type="radio" name="gm-dim" value="3"> 3D</label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Components M</legend>
+      <div class="gm-row">
+        <label class="gm-radio"><input type="radio" name="gm-m" value="1" checked> 1</label>
+        <label class="gm-radio"><input type="radio" name="gm-m" value="2"> 2</label>
+        <label class="gm-radio"><input type="radio" name="gm-m" value="3"> 3</label>
+      </div>
+    </fieldset>
+    <fieldset class="t1only">
+      <legend>Target shape (gray)</legend>
+      <div class="gm-row">
+        <label class="gm-radio"><input type="radio" name="gm-t" value="none" checked> none</label>
+        <label class="gm-radio"><input type="radio" name="gm-t" value="bimodal"> bimodal</label>
+        <label class="gm-radio"><input type="radio" name="gm-t" value="box"> uniform box</label>
+        <label class="gm-radio"><input type="radio" name="gm-t" value="skewed"> skewed</label>
+      </div>
+    </fieldset>
+  </div>
+  <div class="gm-controls" id="gm-comps"></div>
+
+  <div class="gm-legend" id="gm-legend"></div>
+
+  <div class="gm-stage" id="gm-stage">
+    <svg></svg>
+  </div>
+  <div class="gm-cap" id="gm-cap"></div>
+  <div class="gm-hover" id="gm-hover"></div>
+
+<script>
+"use strict";
+
+// =====================================================================
+// ---- DATA (swap here) ----
+// No datasets: the "data" is the slider state below plus the three 1D
+// target shapes from the lecture, each standardized to mean 0, sd 1
+// (same first two moments as N(0,1) -> one Gaussian provably can't fit).
+// =====================================================================
+const SQ3 = Math.sqrt(3), SQ2 = Math.sqrt(2), TH = 1 / SQ2;
+const TARGETS = {
+  bimodal: {                                 // 0.5 N(-0.9,s2) + 0.5 N(0.9,s2), s2 = 1 - 0.81
+    label: "bimodal",
+    dens: x => 0.5 * (dnorm(x, -0.9, Math.sqrt(0.19)) + dnorm(x, 0.9, Math.sqrt(0.19))),
+    hint: "This target IS a 2-component mixture — with M = 2 you can match it exactly " +
+      "(\\(\\mu = \\pm 0.9\\), \\(\\sigma \\approx 0.44\\), equal weights).",
+  },
+  box: {                                     // U[-sqrt(3), sqrt(3)]
+    label: "uniform box",
+    dens: x => (Math.abs(x) <= SQ3 ? 1 / (2 * SQ3) : 0),
+    hint: "The box is NOT a mixture of Gaussians — no finite M matches it exactly. " +
+      "Watch how each extra component buys a flatter top.",
+  },
+  skewed: {                                  // Gamma(2, 1/sqrt(2)) shifted to mean 0
+    label: "skewed",
+    dens: x => { const y = x + SQ2; return y > 0 ? (y / (TH * TH)) * Math.exp(-y / TH) : 0; },
+    hint: "Skew comes from asymmetry: try a narrow component on the left shoulder and " +
+      "a wide one pushed right.",
+  },
+};
+
+const state = {
+  dim: 1, M: 1, target: "none", cam: { yaw: 0.7, pitch: 0.45 },
+  comp: [
+    { a: 0.5, mu: [0, 0, 0], sd: [1, 1, 1] },
+    { a: 0.5, mu: [1.5, 1.5, 0], sd: [0.7, 0.7, 0.7] },
+    { a: 0.5, mu: [-1.5, -1.5, 0], sd: [0.7, 0.7, 0.7] },
+  ],
+};
+
+const CCOL = ["#e15759", "#4e79a7", "#59a14f"];
+const CMIX = "#212121", CTGT = "#9e9e9e";
+const CHEAT = t => d3.interpolatePurples(0.96 * t);           // 2D density heatmap: white -> dark purple
+const DOM = [-6, 6];
+
+// =====================================================================
+// Mixture math (everything below derives from state)
+// =====================================================================
+function dnorm(x, m, s) { return Math.exp(-0.5 * ((x - m) / s) ** 2) / (Math.sqrt(2 * Math.PI) * s); }
+
+function alphas() {
+  const raw = state.comp.slice(0, state.M).map(c => c.a);
+  const tot = d3.sum(raw);
+  return raw.map(a => a / tot);
+}
+function compDens(m, v) {                    // N(v; mu_m, diag(sd_m^2)) over active dims
+  let d = 1;
+  for (let j = 0; j < v.length; j++) d *= dnorm(v[j], state.comp[m].mu[j], state.comp[m].sd[j]);
+  return d;
+}
+function mixDens(v) {
+  const al = alphas();
+  return d3.sum(al, (a, m) => a * compDens(m, v));
+}
+function gammas(v) {                         // responsibilities at point v
+  const al = alphas();
+  const w = al.map((a, m) => a * compDens(m, v));
+  const tot = d3.sum(w);
+  return w.map(x => x / tot);
+}
+function moments1() {                        // mixture mean & sd along x1
+  const al = alphas();
+  const mean = d3.sum(al, (a, m) => a * state.comp[m].mu[0]);
+  const ex2 = d3.sum(al, (a, m) => a * (state.comp[m].sd[0] ** 2 + state.comp[m].mu[0] ** 2));
+  return { mean, sd: Math.sqrt(Math.max(0, ex2 - mean * mean)) };
+}
+
+// =====================================================================
+// Shared helpers
+// =====================================================================
+const stage = document.getElementById("gm-stage");
+const svg = d3.select(stage.querySelector("svg"));
+const MAR = { l: 50, r: 16, t: 12, b: 40 };
+const fmt2 = v => v.toFixed(2);
+const fmtP = v => (v < 1e-4 && v > 0 ? v.toExponential(2) : v.toPrecision(3));
+
+function typeset(els) {
+  if (window.MathJax && MathJax.typesetPromise) MathJax.typesetPromise(els).catch(() => {});
+}
+function clearStage() {
+  svg.selectAll("*").remove();
+  for (const el of stage.querySelectorAll(".axl, .axl-y, .axl3, .axl-free, canvas")) el.remove();
+  stage.classList.remove("threed");
+}
+function addLabel(cls, latex, left, top) {
+  const sp = document.createElement("span");
+  sp.className = cls;
+  sp.style.left = left + "px"; sp.style.top = top + "px";
+  sp.innerHTML = latex;
+  stage.appendChild(sp);
+  typeset([sp]);
+  return sp;
+}
+
+// =====================================================================
+// Hover readout: the responsibility arithmetic at the cursor
+// =====================================================================
+const hover = { cells: null };
+function buildHover() {
+  const box = document.getElementById("gm-hover");
+  if (state.dim === 3) { box.innerHTML = ""; hover.cells = null; return; }
+  box.innerHTML =
+    `<span class="hint">Hover over the plot: each component's height, its weighted height, and its share of the total — the responsibility.</span>` +
+    `<table><thead><tr><th>component</th><th>\\(\\pi_m\\)</th><th>\\(N(x;\\mu_m,\\sigma_m^2)\\)</th>` +
+    `<th>\\(\\pi_m N(x;\\mu_m,\\sigma_m^2)\\)</th><th>\\(\\gamma_m(x)\\)</th></tr></thead><tbody>` +
+    d3.range(state.M).map(m =>
+      `<tr id="gm-hr${m}"><td><span class="sw" style="display:inline-block;width:10px;height:10px;border-radius:50%;` +
+      `background:${CCOL[m]};margin-right:5px"></span>${m + 1}</td><td id="gm-ha${m}">&ndash;</td>` +
+      `<td id="gm-hn${m}">&ndash;</td><td id="gm-hw${m}">&ndash;</td><td id="gm-hg${m}">&ndash;</td></tr>`).join("") +
+    `</tbody></table>`;
+  typeset([box]);
+  hover.cells = d3.range(state.M).map(m => ({
+    row: document.getElementById("gm-hr" + m),
+    a: document.getElementById("gm-ha" + m),
+    n: document.getElementById("gm-hn" + m),
+    w: document.getElementById("gm-hw" + m),
+    g: document.getElementById("gm-hg" + m),
+  }));
+}
+function updateHover(v) {
+  if (!hover.cells) return;
+  const al = alphas(), gs = gammas(v);
+  const win = gs.indexOf(Math.max(...gs));
+  hover.cells.forEach((c, m) => {
+    const nd = compDens(m, v);
+    c.a.textContent = fmt2(al[m]);
+    c.n.textContent = fmtP(nd);
+    c.w.textContent = fmtP(al[m] * nd);
+    c.g.textContent = fmt2(gs[m]);
+    c.row.classList.toggle("win", m === win);
+  });
+}
+function resetHover() {
+  if (!hover.cells) return;
+  for (const c of hover.cells) {
+    c.a.innerHTML = "&ndash;"; c.n.innerHTML = "&ndash;"; c.w.innerHTML = "&ndash;"; c.g.innerHTML = "&ndash;";
+    c.row.classList.remove("win");
+  }
+}
+
+// =====================================================================
+// 1D: weighted components + mixture curve + target + responsibility strip
+// =====================================================================
+function render1D() {
+  const W = 680, H = 470, STRIP = 24, GAP = 26;
+  svg.attr("width", W).attr("height", H);
+  const cw = W - MAR.l - MAR.r, ch = H - MAR.t - MAR.b - STRIP - GAP;
+  const g = svg.append("g").attr("transform", `translate(${MAR.l},${MAR.t})`);
+  const xs = d3.scaleLinear().domain(DOM).range([0, cw]);
+  const NG = 400;
+  const grid = d3.range(NG + 1).map(i => DOM[0] + (DOM[1] - DOM[0]) * i / NG);
+  const al = alphas();
+  const tgt = state.target === "none" ? null : TARGETS[state.target];
+  const mixv = grid.map(x => mixDens([x]));
+  const ymax = Math.max(0.85, d3.max(mixv) * 1.08, tgt ? d3.max(grid, x => tgt.dens(x)) * 1.08 : 0);
+  const ys = d3.scaleLinear().domain([0, ymax]).range([ch, 0]);
+
+  // target (gray, filled)
+  if (tgt) {
+    g.append("path")
+      .attr("d", d3.line().x(x => xs(x)).y(x => ys(tgt.dens(x)))(grid) +
+        `L${xs(DOM[1])},${ys(0)}L${xs(DOM[0])},${ys(0)}Z`)
+      .attr("fill", CTGT).attr("fill-opacity", 0.30).attr("stroke", CTGT).attr("stroke-width", 1.5);
+  }
+  // weighted component curves
+  for (let m = 0; m < state.M; m++) {
+    g.append("path")
+      .attr("d", d3.line().x(x => xs(x)).y(x => ys(al[m] * compDens(m, [x])))(grid))
+      .attr("fill", "none").attr("stroke", CCOL[m]).attr("stroke-width", 1.8).attr("opacity", 0.9);
+  }
+  // mixture (bold, dark)
+  g.append("path")
+    .attr("d", d3.line().x(x => xs(x)).y((x, i) => ys(mixv[i]))(grid))
+    .attr("fill", "none").attr("stroke", CMIX).attr("stroke-width", 2.8);
+
+  // responsibility strip: stacked gamma_m(x) shares under the axis
+  const gs = svg.append("g").attr("transform", `translate(${MAR.l},${MAR.t + ch + GAP})`);
+  const GC = 200, colw = cw / GC;
+  for (let i = 0; i < GC; i++) {
+    const x = DOM[0] + (DOM[1] - DOM[0]) * (i + 0.5) / GC;
+    const gam = gammas([x]);
+    let y0 = 0;
+    for (let m = 0; m < state.M; m++) {
+      gs.append("rect").attr("x", i * colw).attr("y", y0 * STRIP)
+        .attr("width", colw + 0.5).attr("height", gam[m] * STRIP)
+        .attr("fill", CCOL[m]).attr("opacity", 0.8);
+      y0 += gam[m];
+    }
+  }
+  gs.append("rect").attr("width", cw).attr("height", STRIP).attr("fill", "none").attr("stroke", "#bbb");
+  addLabel("axl-free", "\\(\\gamma_m(x)\\)", MAR.l + cw + 6, MAR.t + ch + GAP + STRIP / 2);
+
+  // axes
+  g.append("g").attr("transform", `translate(0,${ch})`).call(d3.axisBottom(xs).ticks(9).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  g.append("g").call(d3.axisLeft(ys).ticks(5).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  addLabel("axl axl-x", "\\(x\\)", MAR.l + cw / 2, MAR.t + ch + 30);
+  addLabel("axl axl-y", "\\(p(x)\\)", 4, MAR.t + ch / 2);
+
+  // hover: crosshair over the curve area
+  const cross = g.append("line").attr("y1", 0).attr("y2", ch)
+    .attr("stroke", "#888").attr("stroke-width", 1).attr("visibility", "hidden");
+  g.append("rect").attr("width", cw).attr("height", ch).attr("fill", "none").attr("pointer-events", "all")
+    .on("mousemove", ev => {
+      const [mx] = d3.pointer(ev);
+      cross.attr("x1", mx).attr("x2", mx).attr("visibility", "visible");
+      updateHover([xs.invert(mx)]);
+    })
+    .on("mouseleave", () => { cross.attr("visibility", "hidden"); resetHover(); });
+}
+
+// =====================================================================
+// 2D: mixture-density heatmap (filled contour bands) + contour lines + comp ellipses
+// =====================================================================
+function render2D() {
+  const W = 560, H = 520; svg.attr("width", W).attr("height", H);
+  const cw = W - MAR.l - MAR.r, ch = H - MAR.t - MAR.b;
+  const g = svg.append("g").attr("transform", `translate(${MAR.l},${MAR.t})`);
+  const xs = d3.scaleLinear().domain(DOM).range([0, cw]);
+  const ys = d3.scaleLinear().domain(DOM).range([ch, 0]);
+  const al = alphas();
+
+  // mixture density p(x) on a grid: filled bands (heatmap) + a few contour lines on top
+  const GD = 90, vals = new Array(GD * GD);
+  let peak = 0;
+  for (let r = 0; r < GD; r++) {
+    const vy = DOM[0] + (DOM[1] - DOM[0]) * (r + 0.5) / GD;
+    for (let c = 0; c < GD; c++) {
+      const vx = DOM[0] + (DOM[1] - DOM[0]) * (c + 0.5) / GD;
+      const d = mixDens([vx, vy]);
+      vals[r * GD + c] = d;
+      if (d > peak) peak = d;
+    }
+  }
+  // heatmap: NB bands between equally spaced density levels, white (p ~ 0) -> dark (p = peak)
+  const NB = 14;
+  const bandLevels = d3.range(1, NB).map(i => peak * i / NB);
+  const bands = d3.contours().size([GD, GD]).thresholds(bandLevels)(vals);
+  const gHeat = g.append("g").attr("transform", `scale(${cw / GD},${-ch / GD}) translate(0,${-GD})`);
+  gHeat.append("rect").attr("width", GD).attr("height", GD).attr("fill", CHEAT(0));
+  gHeat.selectAll("path").data(bands).join("path")
+    .attr("d", d3.geoPath())
+    .attr("fill", (d, i) => CHEAT((i + 1) / NB)).attr("stroke", "none");
+  // contour lines at fixed fractions of the peak
+  const levels = [0.05, 0.12, 0.22, 0.35, 0.5, 0.66, 0.82, 0.94].map(t => t * peak);
+  const conts = d3.contours().size([GD, GD]).thresholds(levels)(vals);
+  g.append("g")
+    .attr("transform", `scale(${cw / GD},${-ch / GD}) translate(0,${-GD})`)
+    .selectAll("path").data(conts).join("path")
+    .attr("d", d3.geoPath())
+    .attr("fill", "none").attr("stroke", CMIX).attr("stroke-width", 1.1 / (cw / GD))
+    .attr("stroke-opacity", 0.45);
+  render2D.heat = { peak, vals, GD, NB };
+  // component 1s/2s ellipses (axis-aligned) + mean crosses
+  for (let m = 0; m < state.M; m++) {
+    const c = state.comp[m];
+    for (const k of [1, 2]) {
+      g.append("ellipse")
+        .attr("cx", xs(c.mu[0])).attr("cy", ys(c.mu[1]))
+        .attr("rx", Math.abs(xs(c.mu[0] + k * c.sd[0]) - xs(c.mu[0])))
+        .attr("ry", Math.abs(ys(c.mu[1] + k * c.sd[1]) - ys(c.mu[1])))
+        .attr("fill", "none").attr("stroke", CCOL[m])
+        .attr("stroke-width", k === 1 ? 2 : 1.1).attr("stroke-dasharray", "5,3");
+    }
+    g.append("line").attr("x1", xs(c.mu[0]) - 6).attr("x2", xs(c.mu[0]) + 6)
+      .attr("y1", ys(c.mu[1])).attr("y2", ys(c.mu[1])).attr("stroke", CCOL[m]).attr("stroke-width", 2);
+    g.append("line").attr("x1", xs(c.mu[0])).attr("x2", xs(c.mu[0]))
+      .attr("y1", ys(c.mu[1]) - 6).attr("y2", ys(c.mu[1]) + 6).attr("stroke", CCOL[m]).attr("stroke-width", 2);
+  }
+  // axes
+  g.append("g").attr("transform", `translate(0,${ch})`).call(d3.axisBottom(xs).ticks(9).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  g.append("g").call(d3.axisLeft(ys).ticks(9).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  addLabel("axl axl-x", "\\(x_1\\)", MAR.l + cw / 2, H - 14);
+  addLabel("axl axl-y", "\\(x_2\\)", 4, MAR.t + ch / 2);
+
+  // hover
+  const crossV = g.append("line").attr("y1", 0).attr("y2", ch)
+    .attr("stroke", "#888").attr("stroke-width", 1).attr("visibility", "hidden");
+  const crossH = g.append("line").attr("x1", 0).attr("x2", cw)
+    .attr("stroke", "#888").attr("stroke-width", 1).attr("visibility", "hidden");
+  g.append("rect").attr("width", cw).attr("height", ch).attr("fill", "none").attr("pointer-events", "all")
+    .on("mousemove", ev => {
+      const [mx, my] = d3.pointer(ev);
+      crossV.attr("x1", mx).attr("x2", mx).attr("visibility", "visible");
+      crossH.attr("y1", my).attr("y2", my).attr("visibility", "visible");
+      updateHover([xs.invert(mx), ys.invert(my)]);
+    })
+    .on("mouseleave", () => {
+      crossV.attr("visibility", "hidden"); crossH.attr("visibility", "hidden"); resetHover();
+    });
+}
+
+// =====================================================================
+// 3D: isosurfaces (level sets) of the MIXTURE density p(x), the 3D analogue
+// of the 2D contour picture: components that overlap fuse into one shell.
+// Surface extraction = marching tetrahedra on an N^3 grid; triangles are
+// painted back-to-front with flat shading on a <canvas> under the SVG
+// (the SVG keeps the drag handler, axis labels and the mean crosses).
+// =====================================================================
+const ISO_N = 36;                                       // grid points per axis over DOM
+const ISO_FRACS = [Math.exp(-0.5), Math.exp(-2)];       // 1-sigma and 2-sigma equivalents of the peak
+const ISO_STYLE = [{ col: CHEAT(0.9), alpha: 0.95 }, { col: CHEAT(0.45), alpha: 0.35 }];
+
+function densityGrid() {                                // p(x) on the N^3 lattice, cube coords in [-1,1]
+  const N = ISO_N, vals = new Float64Array(N * N * N), al = alphas();
+  const ax = d3.range(N).map(i => DOM[0] + (DOM[1] - DOM[0]) * i / (N - 1));
+  // separable per-component 1D factors: p = sum_m pi_m f_m1(x1) f_m2(x2) f_m3(x3)
+  const F = state.comp.slice(0, state.M).map(c => [0, 1, 2].map(j => ax.map(x => dnorm(x, c.mu[j], c.sd[j]))));
+  let peak = 0;
+  for (let k = 0; k < N; k++) for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    let p = 0;
+    for (let m = 0; m < state.M; m++) p += al[m] * F[m][0][i] * F[m][1][j] * F[m][2][k];
+    vals[(k * N + j) * N + i] = p;
+    if (p > peak) peak = p;
+  }
+  return { N, vals, peak, ax };
+}
+
+// marching tetrahedra (6 tets per cube, all sharing the 0-6 diagonal); returns a flat
+// list of triangles [[x,y,z],[x,y,z],[x,y,z]] in cube coordinates
+function isosurface(grid, iso) {
+  const { N, vals, ax } = grid, tris = [];
+  const cube = v => v / DOM[1];
+  const corner = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]];
+  const TETS = [[0, 5, 1, 6], [0, 1, 2, 6], [0, 2, 3, 6], [0, 3, 7, 6], [0, 7, 4, 6], [0, 4, 5, 6]];
+  const P = new Array(8), V = new Array(8);
+  const lerp = (a, b) => {                              // crossing point on edge a-b
+    const t = (iso - V[a]) / (V[b] - V[a]);
+    return [P[a][0] + t * (P[b][0] - P[a][0]), P[a][1] + t * (P[b][1] - P[a][1]), P[a][2] + t * (P[b][2] - P[a][2])];
+  };
+  for (let k = 0; k < N - 1; k++) for (let j = 0; j < N - 1; j++) for (let i = 0; i < N - 1; i++) {
+    let lo = Infinity, hi = -Infinity;
+    for (let c = 0; c < 8; c++) {
+      const [di, dj, dk] = corner[c];
+      const v = vals[((k + dk) * N + (j + dj)) * N + (i + di)];
+      V[c] = v; if (v < lo) lo = v; if (v > hi) hi = v;
+      P[c] = [cube(ax[i + di]), cube(ax[j + dj]), cube(ax[k + dk])];
+    }
+    if (lo >= iso || hi < iso) continue;                // cube entirely on one side
+    for (const [a, b, c, d] of TETS) {
+      const idx = (V[a] < iso ? 1 : 0) | (V[b] < iso ? 2 : 0) | (V[c] < iso ? 4 : 0) | (V[d] < iso ? 8 : 0);
+      switch (idx) {
+        case 0x00: case 0x0F: break;
+        case 0x0E: case 0x01: tris.push([lerp(a, b), lerp(a, c), lerp(a, d)]); break;
+        case 0x0D: case 0x02: tris.push([lerp(b, a), lerp(b, d), lerp(b, c)]); break;
+        case 0x0C: case 0x03: {
+          const ad = lerp(a, d), ac = lerp(a, c), bd = lerp(b, d), bc = lerp(b, c);
+          tris.push([ad, ac, bd]); tris.push([bd, bc, ac]); break;
+        }
+        case 0x0B: case 0x04: tris.push([lerp(c, a), lerp(c, b), lerp(c, d)]); break;
+        case 0x0A: case 0x05: {
+          const ab = lerp(a, b), cd = lerp(c, d), ad = lerp(a, d), bc = lerp(b, c);
+          tris.push([ab, cd, ad]); tris.push([ab, bc, cd]); break;
+        }
+        case 0x09: case 0x06: {
+          const ab = lerp(a, b), bd = lerp(b, d), ac = lerp(a, c), cd = lerp(c, d);
+          tris.push([ab, bd, ac]); tris.push([ac, bd, cd]); break;
+        }
+        case 0x07: case 0x08: tris.push([lerp(d, a), lerp(d, c), lerp(d, b)]); break;
+      }
+    }
+  }
+  return tris;
+}
+
+function render3D() {
+  const W = 620, H = 500; svg.attr("width", W).attr("height", H);
+  stage.classList.add("threed");
+  const canvas = document.createElement("canvas");
+  canvas.width = W; canvas.height = H; canvas.className = "gm-canvas";
+  stage.insertBefore(canvas, stage.firstChild);
+  const ctx = canvas.getContext("2d");
+  const toCube = v => v.map(x => x / DOM[1]);
+  const gCross = svg.append("g");
+  const labels = ["\\(x_1\\)", "\\(x_2\\)", "\\(x_3\\)"].map(t => addLabel("axl3", t, 0, 0));
+
+  // surfaces (recomputed only here, i.e. when a slider moves; rotation just repaints)
+  const grid = densityGrid();
+  const shells = ISO_FRACS.map((f, s) => ({ tris: isosurface(grid, f * grid.peak), style: ISO_STYLE[s], frac: f }));
+  render3D.iso = { peak: grid.peak, counts: shells.map(s => s.tris.length), grid };
+
+  // camera: returns screen x, screen y and camera-space coords (x right, y up, z toward viewer)
+  function cam3(gp, cam) {
+    const c = Math.cos(cam.yaw), s = Math.sin(cam.yaw);
+    const sp = Math.sin(cam.pitch), cp = Math.cos(cam.pitch);
+    const u = gp[0] * c - gp[1] * s, v = gp[0] * s + gp[1] * c, z = gp[2];
+    return [u, v * sp + z * cp, -(v * cp - z * sp)];
+  }
+  const k = W * 0.30, cx = W / 2, cy = H * 0.52;
+  const proj = (gp, cam) => { const q = cam3(gp, cam); return [cx + k * q[0], cy - k * q[1], q[2]]; };
+  const LIGHT = (() => { const l = [-0.45, 0.6, 1]; const n = Math.hypot(...l); return l.map(x => x / n); })();
+
+  function draw() {
+    const cam = state.cam;
+    ctx.clearRect(0, 0, W, H);
+    // bounding cube edges
+    ctx.strokeStyle = "#ddd"; ctx.lineWidth = 1; ctx.beginPath();
+    for (const a of [-1, 1]) for (const b of [-1, 1]) for (const ax of [0, 1, 2]) {
+      const p1 = [0, 0, 0], p2 = [0, 0, 0];
+      const oth = [0, 1, 2].filter(t => t !== ax);
+      p1[oth[0]] = a; p1[oth[1]] = b; p2[oth[0]] = a; p2[oth[1]] = b;
+      p1[ax] = -1; p2[ax] = 1;
+      const q1 = proj(p1, cam), q2 = proj(p2, cam);
+      ctx.moveTo(q1[0], q1[1]); ctx.lineTo(q2[0], q2[1]);
+    }
+    ctx.stroke();
+    [[1.25, 0, -1], [0, 1.25, -1], [0, 0, 1.2]].forEach((pos, j) => {
+      const q = proj(pos, cam);
+      labels[j].style.left = q[0] + "px"; labels[j].style.top = q[1] + "px";
+    });
+    // all triangles of all shells, painted far -> near
+    const faces = [];
+    for (const sh of shells) for (const t of sh.tris) {
+      const q = t.map(p => cam3(p, cam));
+      const e1 = [q[1][0] - q[0][0], q[1][1] - q[0][1], q[1][2] - q[0][2]];
+      const e2 = [q[2][0] - q[0][0], q[2][1] - q[0][1], q[2][2] - q[0][2]];
+      const n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+      const nn = Math.hypot(n[0], n[1], n[2]) || 1;
+      const lam = Math.abs(n[0] * LIGHT[0] + n[1] * LIGHT[1] + n[2] * LIGHT[2]) / nn;
+      faces.push({ q, depth: (q[0][2] + q[1][2] + q[2][2]) / 3, shade: 0.5 + 0.5 * lam, style: sh.style });
+    }
+    faces.sort((a, b) => a.depth - b.depth);
+    for (const f of faces) {
+      const c = d3.rgb(f.style.col);
+      const col = `rgb(${(c.r * f.shade) | 0},${(c.g * f.shade) | 0},${(c.b * f.shade) | 0})`;
+      ctx.globalAlpha = f.style.alpha;
+      ctx.fillStyle = col; ctx.strokeStyle = col; ctx.lineWidth = 0.6;
+      ctx.beginPath();
+      ctx.moveTo(cx + k * f.q[0][0], cy - k * f.q[0][1]);
+      ctx.lineTo(cx + k * f.q[1][0], cy - k * f.q[1][1]);
+      ctx.lineTo(cx + k * f.q[2][0], cy - k * f.q[2][1]);
+      ctx.closePath(); ctx.fill();
+      if (f.style.alpha > 0.9) ctx.stroke();           // seam cover only on opaque shells (strokes stack on translucent ones)
+    }
+    ctx.globalAlpha = 1;
+    // component means as colored crosses (SVG, always on top)
+    gCross.selectAll("*").remove();
+    for (let m = 0; m < state.M; m++) {
+      const q = proj(toCube(state.comp[m].mu), cam);
+      gCross.append("line").attr("x1", q[0] - 6).attr("x2", q[0] + 6).attr("y1", q[1]).attr("y2", q[1])
+        .attr("stroke", CCOL[m]).attr("stroke-width", 2.5);
+      gCross.append("line").attr("x1", q[0]).attr("x2", q[0]).attr("y1", q[1] - 6).attr("y2", q[1] + 6)
+        .attr("stroke", CCOL[m]).attr("stroke-width", 2.5);
+    }
+  }
+  draw();
+  render3D.redraw = draw;
+
+  let raf = false;
+  svg.call(d3.drag().on("drag", ev => {
+    state.cam.yaw += ev.dx * 0.008;
+    state.cam.pitch = Math.max(0.1, Math.min(1.4, state.cam.pitch + ev.dy * 0.008));
+    if (!raf) { raf = true; requestAnimationFrame(() => { raf = false; draw(); }); }
+  }));
+}
+
+// =====================================================================
+// Captions, legend, component controls
+// =====================================================================
+function renderMeta() {
+  const al = alphas();
+  const mo = moments1();
+  const tgt = state.target !== "none" && state.dim === 1 ? TARGETS[state.target] : null;
+  const cap = document.getElementById("gm-cap");
+  let txt = "";
+  if (state.dim === 1) {
+    txt = `Your mixture: mean = <b>${mo.mean.toFixed(2)}</b>, sd = <b>${mo.sd.toFixed(2)}</b>` +
+      (tgt ? ` — the target has mean 0, sd 1 exactly. Matching the moments is easy; matching the ` +
+             `<em>shape</em> is the point. ${tgt.hint}`
+           : `. With M = 1 the density has one mode; mixtures can have up to M (but may have fewer — ` +
+             `push two means together and watch the modes merge).`);
+  } else if (state.dim === 2) {
+    txt = `Shading is the mixture density \\(p(x)\\): white where it is near 0, darkest at its peak ` +
+      `(${fmtP(render2D.heat ? render2D.heat.peak : 0)}); thin lines are contours of the same density. ` +
+      `Dashed ellipses: each component's 1\\(\\sigma\\)/2\\(\\sigma\\); the density adds the weighted bumps.`;
+  } else {
+    txt = `Shells are level sets of the mixture density \\(p(x)\\): the inner one at ` +
+      `\\(e^{-1/2} \\approx 0.61\\) of the peak and the outer at \\(e^{-2} \\approx 0.14\\) of the peak ` +
+      `(for a single Gaussian these are exactly its 1\\(\\sigma\\) and 2\\(\\sigma\\) ellipsoids). ` +
+      `Overlapping components fuse into one shape; crosses mark the means.`;
+  }
+  cap.innerHTML = txt;
+  typeset([cap]);
+
+  document.getElementById("gm-legend").innerHTML =
+    d3.range(state.M).map(m => `<span class="sw" style="background:${CCOL[m]}"></span>component ${m + 1}`).join("") +
+    (state.dim === 1
+      ? `<span class="ln" style="border-color:${CMIX}"></span>mixture p(x)` +
+        (state.target !== "none" ? `<span class="ln" style="border-color:${CTGT}"></span>target` : "") +
+        `<span style="color:#888; margin-left:14px">strip below = responsibilities γ across x</span>`
+      : state.dim === 2
+      ? `<span class="sw" style="width:28px; border-radius:2px; background:linear-gradient(90deg, ${CHEAT(0)}, ${CHEAT(1)}); border:1px solid #ccc"></span>mixture density p(x) (white = 0, dark = peak)` +
+        `<span class="ln" style="border-color:${CMIX}"></span>density contours`
+      : `<span class="sw" style="background:${ISO_STYLE[0].col}"></span>inner shell: p = 0.61 peak` +
+        `<span class="sw" style="background:${ISO_STYLE[1].col}; opacity:0.6"></span>outer shell: p = 0.14 peak`);
+
+  // normalized pi (weight) readouts in the component legends
+  const alAll = alphas();
+  for (let m = 0; m < 3; m++) {
+    const el = document.getElementById("gm-aval" + m);
+    if (el) el.textContent = m < state.M ? `π = ${alAll[m].toFixed(2)}` : "";
+  }
+}
+
+function buildCompControls() {
+  const wrap = document.getElementById("gm-comps");
+  wrap.innerHTML = d3.range(3).map(m => `
+    <fieldset class="${m === 1 ? "c1" : m === 2 ? "c2" : ""}" style="border-color:${CCOL[m]}">
+      <legend style="color:${CCOL[m]}">component ${m + 1} &nbsp;<span id="gm-aval${m}" style="font-weight:normal"></span></legend>
+      <div class="gm-srow"><span class="lab">weight</span><input type="range" id="gm-a${m}" min="0.05" max="1" step="0.05" value="${state.comp[m].a}"><span class="val" id="gm-a${m}v"></span></div>
+      <div class="gm-srow"><span class="lab">\\(\\mu_1\\)</span><input type="range" id="gm-mu${m}0" min="-4" max="4" step="0.1" value="${state.comp[m].mu[0]}"><span class="val" id="gm-mu${m}0v">${state.comp[m].mu[0].toFixed(1)}</span></div>
+      <div class="gm-srow"><span class="lab">\\(\\sigma_1\\)</span><input type="range" id="gm-sd${m}0" min="0.25" max="2.5" step="0.05" value="${state.comp[m].sd[0]}"><span class="val" id="gm-sd${m}0v">${state.comp[m].sd[0].toFixed(2)}</span></div>
+      <div class="gm-srow dim2"><span class="lab">\\(\\mu_2\\)</span><input type="range" id="gm-mu${m}1" min="-4" max="4" step="0.1" value="${state.comp[m].mu[1]}"><span class="val" id="gm-mu${m}1v">${state.comp[m].mu[1].toFixed(1)}</span></div>
+      <div class="gm-srow dim2"><span class="lab">\\(\\sigma_2\\)</span><input type="range" id="gm-sd${m}1" min="0.25" max="2.5" step="0.05" value="${state.comp[m].sd[1]}"><span class="val" id="gm-sd${m}1v">${state.comp[m].sd[1].toFixed(2)}</span></div>
+      <div class="gm-srow dim3"><span class="lab">\\(\\mu_3\\)</span><input type="range" id="gm-mu${m}2" min="-4" max="4" step="0.1" value="${state.comp[m].mu[2]}"><span class="val" id="gm-mu${m}2v">${state.comp[m].mu[2].toFixed(1)}</span></div>
+      <div class="gm-srow dim3"><span class="lab">\\(\\sigma_3\\)</span><input type="range" id="gm-sd${m}2" min="0.25" max="2.5" step="0.05" value="${state.comp[m].sd[2]}"><span class="val" id="gm-sd${m}2v">${state.comp[m].sd[2].toFixed(2)}</span></div>
+    </fieldset>`).join("");
+  typeset([wrap]);
+
+  for (let m = 0; m < 3; m++) {
+    const a = document.getElementById("gm-a" + m);
+    a.addEventListener("input", () => { state.comp[m].a = +a.value; renderView(); });
+    for (let j = 0; j < 3; j++) {
+      const mu = document.getElementById(`gm-mu${m}${j}`);
+      mu.addEventListener("input", () => {
+        state.comp[m].mu[j] = +mu.value;
+        document.getElementById(`gm-mu${m}${j}v`).textContent = (+mu.value).toFixed(1);
+        renderView();
+      });
+      const sd = document.getElementById(`gm-sd${m}${j}`);
+      sd.addEventListener("input", () => {
+        state.comp[m].sd[j] = +sd.value;
+        document.getElementById(`gm-sd${m}${j}v`).textContent = (+sd.value).toFixed(2);
+        renderView();
+      });
+    }
+  }
+}
+
+// =====================================================================
+// Wiring
+// =====================================================================
+function renderView() {                      // light re-render on slider moves
+  clearStage();
+  if (state.dim === 1) render1D();
+  else if (state.dim === 2) render2D();
+  else render3D();
+  renderMeta();
+}
+function renderAll() {                       // full re-render on structure change
+  renderView();
+  buildHover();
+  document.body.dataset.gm = state.M;
+  document.body.dataset.gdim = state.dim;
+}
+
+function main() {
+  if (main.done) return;                     // jsdom fires load twice
+  main.done = true;
+  buildCompControls();
+  for (const r of document.querySelectorAll('input[name="gm-dim"]')) {
+    r.addEventListener("change", () => { if (r.checked) { state.dim = +r.value; renderAll(); } });
+  }
+  for (const r of document.querySelectorAll('input[name="gm-m"]')) {
+    r.addEventListener("change", () => { if (r.checked) { state.M = +r.value; renderAll(); } });
+  }
+  for (const r of document.querySelectorAll('input[name="gm-t"]')) {
+    r.addEventListener("change", () => { if (r.checked) { state.target = r.value; renderView(); } });
+  }
+  renderAll();
+
+  window.__gmApi = {
+    setDim: d => { state.dim = d; document.querySelector(`input[name="gm-dim"][value="${d}"]`).checked = true; renderAll(); },
+    setM: m => { state.M = m; document.querySelector(`input[name="gm-m"][value="${m}"]`).checked = true; renderAll(); },
+    setTarget: t => { state.target = t; document.querySelector(`input[name="gm-t"][value="${t}"]`).checked = true; renderView(); },
+    setComp: (m, key, j, v) => {
+      if (key === "a") state.comp[m].a = v; else state.comp[m][key][j] = v;
+      renderView();
+    },
+    mixDens, gammas, alphas, moments1, TARGETS, state, updateHover, densityGrid, isosurface, render3D,
+  };
+}
+window.addEventListener("load", main);
+</script>
+
+<!--
+  HOW IT WORKS (matches the course notes)
+  - Mixture density p(x) = sum_m pi_m N(x; mu_m, sigma_m^2); weights are
+    normalized from the raw sliders so sum pi_m = 1. 2D/3D components are axis-aligned
+    (diagonal covariance), the notes' per-coordinate sigma^2.
+  - Responsibilities gamma_m(x) = pi_m N(x; mu_m, sigma_m^2) / sum_j ...
+    = a component's curve height at x over the total height there (the
+    notes' reading). Shown as a stacked color strip across x in 1D and in
+    the hover table with the full arithmetic. In 2D the background is a
+    HEATMAP OF THE MIXTURE DENSITY p(x) itself (14 filled contour bands,
+    white -> dark purple, plus thin contour lines), since the applet is used
+    to teach density estimation (an earlier version tinted by argmax
+    responsibility, which read as a classifier).
+  - 3D shows ISOSURFACES of p(x) (marching tetrahedra on a 36^3 grid, two
+    levels e^-1/2 and e^-2 of the peak = the 1s/2s shells of a lone Gaussian),
+    flat-shaded and depth-sorted on a canvas under the SVG; components that
+    overlap fuse into one shell, which per-component ellipsoids (the earlier
+    version) could not show. This applet is exploration only:
+    the EM fitting steps are deliberately not implemented here.
+  - Targets (1D), each standardized to mean 0 and sd 1 so a single Gaussian
+    provably cannot match the shape while a mixture can:
+      bimodal = 0.5 N(-0.9, 0.19) + 0.5 N(0.9, 0.19)  (itself a 2-GMM);
+      box     = Uniform[-sqrt(3), sqrt(3)];
+      skewed  = Gamma(shape 2, scale 1/sqrt(2)) shifted left by sqrt(2).
+
+  SOURCES (kept in source; not displayed in the applet UI)
+  - Course notes: GMM density, constraint sum pi = 1, responsibility
+    formula and its "height / total height" interpretation, and the three
+    "a Gaussian can't fit these" sketches (bimodal, box, skewed).
+  - All curves are analytic; no datasets and no randomness.
+-->
+</body>
+</html>

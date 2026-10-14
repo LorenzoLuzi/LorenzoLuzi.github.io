@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EM for Gaussian Mixtures</title>
+  <link rel="stylesheet" href="../styling/global.css">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; color: #222; }
+    h1 { font-size: 24px; }
+    .em-intro { max-width: 980px; }
+    .em-forms { display: flex; flex-wrap: wrap; gap: 14px; max-width: 1000px; margin: 10px 0; }
+    .em-form { border: 2px solid #ddd; border-radius: 8px; padding: 8px 14px; font-size: 14.5px; opacity: 0.45; flex: 1 1 320px; min-width: 320px; overflow-x: auto; }
+    .em-form.wide { flex: 2 1 520px; }
+    .em-form .eqrow { margin: 4px 0; white-space: nowrap; }
+    .em-form.active { border-color: #f4a300; opacity: 1; background: #fffaf0; }
+    .em-form b { font-size: 13px; }
+    .em-controls { margin: 12px 0; display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; }
+    .em-controls fieldset { border: 1px solid #ccc; border-radius: 6px; padding: 8px 12px; }
+    .em-controls legend { font-weight: bold; font-size: 13px; padding: 0 6px; }
+    .em-row { margin: 5px 0; font-size: 14px; }
+    .em-radio { margin-right: 10px; white-space: nowrap; }
+    button { font-size: 14px; padding: 5px 12px; border-radius: 5px; border: 1px solid #999; background: #f5f5f5; cursor: pointer; }
+    button:hover { background: #eee; }
+    #em-step { font-weight: bold; border-color: #f4a300; background: #fff3d6; }
+    #em-step:hover { background: #ffe9b8; }
+    .em-status { font-size: 15px; margin: 8px 0; max-width: 980px; }
+    .em-main { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+    .em-stage { position: relative; display: inline-block; }
+    .em-stage svg { display: block; }
+    .axl { position: absolute; font-size: 13px; color: #333; pointer-events: none; }
+    .axl-x { transform: translateX(-50%); }
+    .axl-y { transform: translate(-50%, -50%) rotate(-90deg); left: 4px; white-space: nowrap; }
+    .em-side { max-width: 400px; }
+    .em-side .ttl { font-size: 14px; margin: 2px 0; }
+    .ticktext { font-size: 10px; fill: #555; }
+    .em-cap { font-size: 14px; margin-top: 8px; max-width: 800px; }
+    .em-params { border-collapse: collapse; font-size: 13px; margin-top: 12px; font-variant-numeric: tabular-nums; }
+    .em-params th, .em-params td { border: 1px solid #ddd; padding: 3px 9px; text-align: right; }
+    .em-params th { background: #f7f7f7; font-weight: normal; }
+    .em-params td:first-child { text-align: left; }
+    .em-legend { font-size: 13.5px; margin: 6px 0; max-width: 980px; }
+    .em-legend .sw { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin: 0 4px 0 14px; vertical-align: -1px; }
+    .em-ll-read { font-size: 14px; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  </style>
+
+  <script src="https://d3js.org/d3.v7.js"></script>
+  <script>window.MathJax = {
+    tex: { inlineMath: [['\\(', '\\)'], ['$', '$']] },
+    svg: { fontCache: 'global' }
+  };</script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</head>
+
+<body>
+  <h1>EM for Gaussian Mixtures</h1>
+  <p class="em-intro">
+    <!-- Fitting a GMM is a chicken-and-egg problem: <b>given the parameters</b>, computing the
+    responsibilities \(\gamma_{im}\) is easy (a Bayes classifier); <b>given the responsibilities</b>,
+    updating the parameters is easy. EM simply
+    <b>alternates the two easy steps</b> &mdash; and every full round increases the log-likelihood. -->
+    <!-- Step through it: the <b>E-step recolors the points</b> (curves frozen), the
+    <b>M-step moves the curves</b> (colors frozen). EM never sees any labels. -->
+  </p>
+
+  <div class="em-forms">
+    <div class="em-form" id="form-e">
+      <b>E-STEP &mdash; responsibilities from parameters:</b><br>
+      \( \gamma_{im} = \dfrac{\pi_m N(x_i;\, \mu_m, \sigma_m^2)}{\sum_{j=1}^{M} \pi_j N(x_i;\, \mu_j, \sigma_j^2)} \)
+    </div>
+    <div class="em-form wide" id="form-m">
+      <b>M-STEP &mdash; parameters from responsibilities:</b>
+      <div class="eqrow">\( N_m = \sum_i \gamma_{im}, \qquad \pi_m = \dfrac{N_m}{n}, \qquad
+         \mu_m = \dfrac{1}{N_m} \sum_i \gamma_{im}\, x_i \)</div>
+      <div class="eqrow">\( \sigma_m^2 = \dfrac{1}{N_m} \sum_i \gamma_{im}\, (x_i - \mu_m)^2 \)</div>
+    </div>
+  </div>
+
+  <div class="em-controls">
+    <fieldset>
+      <legend>Data</legend>
+      <div class="em-row">
+        <label class="em-radio"><input type="radio" name="em-ds" value="synth2" checked> 2 clusters (synthetic)</label>
+        <label class="em-radio"><input type="radio" name="em-ds" value="synth3"> 3 clusters (synthetic)</label>
+        <label class="em-radio"><input type="radio" name="em-ds" value="penguins"> penguins (real, unlabeled)</label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Dimension</legend>
+      <div class="em-row">
+        <label class="em-radio"><input type="radio" name="em-dim" value="1" checked> 1D</label>
+        <label class="em-radio"><input type="radio" name="em-dim" value="2"> 2D</label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Components M</legend>
+      <div class="em-row">
+        <label class="em-radio"><input type="radio" name="em-m" value="2" checked> 2</label>
+        <label class="em-radio"><input type="radio" name="em-m" value="3"> 3</label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Run EM</legend>
+      <div class="em-row">
+        <button id="em-step">next: E-step</button>
+        <button id="em-run">run to convergence</button>
+        <button id="em-reinit">re-initialize</button>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Extras</legend>
+      <div class="em-row">
+        <label class="em-radio"><input type="checkbox" id="em-reveal"> reveal true labels</label>
+      </div>
+    </fieldset>
+  </div>
+
+  <div class="em-status" id="em-status"></div>
+  <div class="em-legend" id="em-legend"></div>
+
+  <div class="em-main">
+    <div class="em-stage" id="em-stage"><svg></svg></div>
+    <div class="em-side">
+      <div class="ttl">log-likelihood per point, \(\ell/n\) (one dot per completed E+M round)</div>
+      <svg id="em-ll"></svg>
+      <div class="em-ll-read" id="em-llread"></div>
+      <table class="em-params" id="em-params"></table>
+    </div>
+  </div>
+  <div class="em-cap" id="em-cap"></div>
+
+<script>
+"use strict";
+
+// =====================================================================
+// ---- DATA (swap here) ----
+// 1) Palmer penguins (same rows as the other applets; NA dropped). EM
+//    sees ONLY bill length (1D) or bill length + depth (2D) - never the
+//    species. "Reveal true labels" outlines points by species afterward.
+// 2) Two seeded synthetic cluster sets with known true labels.
+// =====================================================================
+const RAW = {"species": ["Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap"], "bill_length_mm": [39.1, 39.5, 40.3, 36.7, 39.3, 38.9, 39.2, 34.1, 42.0, 37.8, 37.8, 41.1, 38.6, 34.6, 36.6, 38.7, 42.5, 34.4, 46.0, 37.8, 37.7, 35.9, 38.2, 38.8, 35.3, 40.6, 40.5, 37.9, 40.5, 39.5, 37.2, 39.5, 40.9, 36.4, 39.2, 38.8, 42.2, 37.6, 39.8, 36.5, 40.8, 36.0, 44.1, 37.0, 39.6, 41.1, 37.5, 36.0, 42.3, 39.6, 40.1, 35.0, 42.0, 34.5, 41.4, 39.0, 40.6, 36.5, 37.6, 35.7, 41.3, 37.6, 41.1, 36.4, 41.6, 35.5, 41.1, 35.9, 41.8, 33.5, 39.7, 39.6, 45.8, 35.5, 42.8, 40.9, 37.2, 36.2, 42.1, 34.6, 42.9, 36.7, 35.1, 37.3, 41.3, 36.3, 36.9, 38.3, 38.9, 35.7, 41.1, 34.0, 39.6, 36.2, 40.8, 38.1, 40.3, 33.1, 43.2, 35.0, 41.0, 37.7, 37.8, 37.9, 39.7, 38.6, 38.2, 38.1, 43.2, 38.1, 45.6, 39.7, 42.2, 39.6, 42.7, 38.6, 37.3, 35.7, 41.1, 36.2, 37.7, 40.2, 41.4, 35.2, 40.6, 38.8, 41.5, 39.0, 44.1, 38.5, 43.1, 36.8, 37.5, 38.1, 41.1, 35.6, 40.2, 37.0, 39.7, 40.2, 40.6, 32.1, 40.7, 37.3, 39.0, 39.2, 36.6, 36.0, 37.8, 36.0, 41.5, 46.1, 50.0, 48.7, 50.0, 47.6, 46.5, 45.4, 46.7, 43.3, 46.8, 40.9, 49.0, 45.5, 48.4, 45.8, 49.3, 42.0, 49.2, 46.2, 48.7, 50.2, 45.1, 46.5, 46.3, 42.9, 46.1, 44.5, 47.8, 48.2, 50.0, 47.3, 42.8, 45.1, 59.6, 49.1, 48.4, 42.6, 44.4, 44.0, 48.7, 42.7, 49.6, 45.3, 49.6, 50.5, 43.6, 45.5, 50.5, 44.9, 45.2, 46.6, 48.5, 45.1, 50.1, 46.5, 45.0, 43.8, 45.5, 43.2, 50.4, 45.3, 46.2, 45.7, 54.3, 45.8, 49.8, 46.2, 49.5, 43.5, 50.7, 47.7, 46.4, 48.2, 46.5, 46.4, 48.6, 47.5, 51.1, 45.2, 45.2, 49.1, 52.5, 47.4, 50.0, 44.9, 50.8, 43.4, 51.3, 47.5, 52.1, 47.5, 52.2, 45.5, 49.5, 44.5, 50.8, 49.4, 46.9, 48.4, 51.1, 48.5, 55.9, 47.2, 49.1, 47.3, 46.8, 41.7, 53.4, 43.3, 48.1, 50.5, 49.8, 43.5, 51.5, 46.2, 55.1, 44.5, 48.8, 47.2, 46.8, 50.4, 45.2, 49.9, 46.5, 50.0, 51.3, 45.4, 52.7, 45.2, 46.1, 51.3, 46.0, 51.3, 46.6, 51.7, 47.0, 52.0, 45.9, 50.5, 50.3, 58.0, 46.4, 49.2, 42.4, 48.5, 43.2, 50.6, 46.7, 52.0, 50.5, 49.5, 46.4, 52.8, 40.9, 54.2, 42.5, 51.0, 49.7, 47.5, 47.6, 52.0, 46.9, 53.5, 49.0, 46.2, 50.9, 45.5, 50.9, 50.8, 50.1, 49.0, 51.5, 49.8, 48.1, 51.4, 45.7, 50.7, 42.5, 52.2, 45.2, 49.3, 50.2, 45.6, 51.9, 46.8, 45.7, 55.8, 43.5, 49.6, 50.8, 50.2], "bill_depth_mm": [18.7, 17.4, 18.0, 19.3, 20.6, 17.8, 19.6, 18.1, 20.2, 17.1, 17.3, 17.6, 21.2, 21.1, 17.8, 19.0, 20.7, 18.4, 21.5, 18.3, 18.7, 19.2, 18.1, 17.2, 18.9, 18.6, 17.9, 18.6, 18.9, 16.7, 18.1, 17.8, 18.9, 17.0, 21.1, 20.0, 18.5, 19.3, 19.1, 18.0, 18.4, 18.5, 19.7, 16.9, 18.8, 19.0, 18.9, 17.9, 21.2, 17.7, 18.9, 17.9, 19.5, 18.1, 18.6, 17.5, 18.8, 16.6, 19.1, 16.9, 21.1, 17.0, 18.2, 17.1, 18.0, 16.2, 19.1, 16.6, 19.4, 19.0, 18.4, 17.2, 18.9, 17.5, 18.5, 16.8, 19.4, 16.1, 19.1, 17.2, 17.6, 18.8, 19.4, 17.8, 20.3, 19.5, 18.6, 19.2, 18.8, 18.0, 18.1, 17.1, 18.1, 17.3, 18.9, 18.6, 18.5, 16.1, 18.5, 17.9, 20.0, 16.0, 20.0, 18.6, 18.9, 17.2, 20.0, 17.0, 19.0, 16.5, 20.3, 17.7, 19.5, 20.7, 18.3, 17.0, 20.5, 17.0, 18.6, 17.2, 19.8, 17.0, 18.5, 15.9, 19.0, 17.6, 18.3, 17.1, 18.0, 17.9, 19.2, 18.5, 18.5, 17.6, 17.5, 17.5, 20.1, 16.5, 17.9, 17.1, 17.2, 15.5, 17.0, 16.8, 18.7, 18.6, 18.4, 17.8, 18.1, 17.1, 18.5, 13.2, 16.3, 14.1, 15.2, 14.5, 13.5, 14.6, 15.3, 13.4, 15.4, 13.7, 16.1, 13.7, 14.6, 14.6, 15.7, 13.5, 15.2, 14.5, 15.1, 14.3, 14.5, 14.5, 15.8, 13.1, 15.1, 14.3, 15.0, 14.3, 15.3, 15.3, 14.2, 14.5, 17.0, 14.8, 16.3, 13.7, 17.3, 13.6, 15.7, 13.7, 16.0, 13.7, 15.0, 15.9, 13.9, 13.9, 15.9, 13.3, 15.8, 14.2, 14.1, 14.4, 15.0, 14.4, 15.4, 13.9, 15.0, 14.5, 15.3, 13.8, 14.9, 13.9, 15.7, 14.2, 16.8, 14.4, 16.2, 14.2, 15.0, 15.0, 15.6, 15.6, 14.8, 15.0, 16.0, 14.2, 16.3, 13.8, 16.4, 14.5, 15.6, 14.6, 15.9, 13.8, 17.3, 14.4, 14.2, 14.0, 17.0, 15.0, 17.1, 14.5, 16.1, 14.7, 15.7, 15.8, 14.6, 14.4, 16.5, 15.0, 17.0, 15.5, 15.0, 13.8, 16.1, 14.7, 15.8, 14.0, 15.1, 15.2, 15.9, 15.2, 16.3, 14.1, 16.0, 15.7, 16.2, 13.7, 14.3, 15.7, 14.8, 16.1, 17.9, 19.5, 19.2, 18.7, 19.8, 17.8, 18.2, 18.2, 18.9, 19.9, 17.8, 20.3, 17.3, 18.1, 17.1, 19.6, 20.0, 17.8, 18.6, 18.2, 17.3, 17.5, 16.6, 19.4, 17.9, 19.0, 18.4, 19.0, 17.8, 20.0, 16.6, 20.8, 16.7, 18.8, 18.6, 16.8, 18.3, 20.7, 16.6, 19.9, 19.5, 17.5, 19.1, 17.0, 17.9, 18.5, 17.9, 19.6, 18.7, 17.3, 16.4, 19.0, 17.3, 19.7, 17.3, 18.8, 16.6, 19.9, 18.8, 19.4, 19.5, 16.5, 17.0, 19.8, 18.1, 18.2, 19.0, 18.7], "flipper_length_mm": [181.0, 186.0, 195.0, 193.0, 190.0, 181.0, 195.0, 193.0, 190.0, 186.0, 180.0, 182.0, 191.0, 198.0, 185.0, 195.0, 197.0, 184.0, 194.0, 174.0, 180.0, 189.0, 185.0, 180.0, 187.0, 183.0, 187.0, 172.0, 180.0, 178.0, 178.0, 188.0, 184.0, 195.0, 196.0, 190.0, 180.0, 181.0, 184.0, 182.0, 195.0, 186.0, 196.0, 185.0, 190.0, 182.0, 179.0, 190.0, 191.0, 186.0, 188.0, 190.0, 200.0, 187.0, 191.0, 186.0, 193.0, 181.0, 194.0, 185.0, 195.0, 185.0, 192.0, 184.0, 192.0, 195.0, 188.0, 190.0, 198.0, 190.0, 190.0, 196.0, 197.0, 190.0, 195.0, 191.0, 184.0, 187.0, 195.0, 189.0, 196.0, 187.0, 193.0, 191.0, 194.0, 190.0, 189.0, 189.0, 190.0, 202.0, 205.0, 185.0, 186.0, 187.0, 208.0, 190.0, 196.0, 178.0, 192.0, 192.0, 203.0, 183.0, 190.0, 193.0, 184.0, 199.0, 190.0, 181.0, 197.0, 198.0, 191.0, 193.0, 197.0, 191.0, 196.0, 188.0, 199.0, 189.0, 189.0, 187.0, 198.0, 176.0, 202.0, 186.0, 199.0, 191.0, 195.0, 191.0, 210.0, 190.0, 197.0, 193.0, 199.0, 187.0, 190.0, 191.0, 200.0, 185.0, 193.0, 193.0, 187.0, 188.0, 190.0, 192.0, 185.0, 190.0, 184.0, 195.0, 193.0, 187.0, 201.0, 211.0, 230.0, 210.0, 218.0, 215.0, 210.0, 211.0, 219.0, 209.0, 215.0, 214.0, 216.0, 214.0, 213.0, 210.0, 217.0, 210.0, 221.0, 209.0, 222.0, 218.0, 215.0, 213.0, 215.0, 215.0, 215.0, 216.0, 215.0, 210.0, 220.0, 222.0, 209.0, 207.0, 230.0, 220.0, 220.0, 213.0, 219.0, 208.0, 208.0, 208.0, 225.0, 210.0, 216.0, 222.0, 217.0, 210.0, 225.0, 213.0, 215.0, 210.0, 220.0, 210.0, 225.0, 217.0, 220.0, 208.0, 220.0, 208.0, 224.0, 208.0, 221.0, 214.0, 231.0, 219.0, 230.0, 214.0, 229.0, 220.0, 223.0, 216.0, 221.0, 221.0, 217.0, 216.0, 230.0, 209.0, 220.0, 215.0, 223.0, 212.0, 221.0, 212.0, 224.0, 212.0, 228.0, 218.0, 218.0, 212.0, 230.0, 218.0, 228.0, 212.0, 224.0, 214.0, 226.0, 216.0, 222.0, 203.0, 225.0, 219.0, 228.0, 215.0, 228.0, 216.0, 215.0, 210.0, 219.0, 208.0, 209.0, 216.0, 229.0, 213.0, 230.0, 217.0, 230.0, 217.0, 222.0, 214.0, 215.0, 222.0, 212.0, 213.0, 192.0, 196.0, 193.0, 188.0, 197.0, 198.0, 178.0, 197.0, 195.0, 198.0, 193.0, 194.0, 185.0, 201.0, 190.0, 201.0, 197.0, 181.0, 190.0, 195.0, 181.0, 191.0, 187.0, 193.0, 195.0, 197.0, 200.0, 200.0, 191.0, 205.0, 187.0, 201.0, 187.0, 203.0, 195.0, 199.0, 195.0, 210.0, 192.0, 205.0, 210.0, 187.0, 196.0, 196.0, 196.0, 201.0, 190.0, 212.0, 187.0, 198.0, 199.0, 201.0, 193.0, 203.0, 187.0, 197.0, 191.0, 203.0, 202.0, 194.0, 206.0, 189.0, 195.0, 207.0, 202.0, 193.0, 210.0, 198.0]};
+
+function makeSynth() {
+  const g = d3.randomNormal.source(d3.randomLcg(0.777))(0, 1);
+  const s2 = [], s3 = [];
+  for (let i = 0; i < 75; i++) s2.push({ x: [-1.8 + 0.6 * g(), -1.2 + 0.9 * g()], t: 0 });
+  for (let i = 0; i < 75; i++) s2.push({ x: [1.8 + 0.9 * g(), 1.0 + 0.6 * g()], t: 1 });
+  for (let i = 0; i < 50; i++) s3.push({ x: [-2.5 + 0.55 * g(), -1.5 + 0.55 * g()], t: 0 });
+  for (let i = 0; i < 50; i++) s3.push({ x: [0 + 0.7 * g(), 1.8 + 0.7 * g()], t: 1 });
+  for (let i = 0; i < 50; i++) s3.push({ x: [2.5 + 0.6 * g(), -1.0 + 0.6 * g()], t: 2 });
+  return { s2, s3 };
+}
+const SYNTH = makeSynth();
+const SPECIES = ["Adelie", "Chinstrap", "Gentoo"];
+const PENG = RAW.species.map((s, i) => ({
+  x: [RAW.bill_length_mm[i], RAW.bill_depth_mm[i]], t: SPECIES.indexOf(s),
+}));
+
+const DATASETS = {
+  synth2: { rows: SYNTH.s2, axis: ["\\(x_1\\)", "\\(x_2\\)"], tLabels: ["cluster A", "cluster B", ""] },
+  synth3: { rows: SYNTH.s3, axis: ["\\(x_1\\)", "\\(x_2\\)"], tLabels: ["cluster A", "cluster B", "cluster C"] },
+  penguins: { rows: PENG, axis: ["bill length (mm)", "bill depth (mm)"], tLabels: SPECIES },
+};
+
+const CCOL = ["#e15759", "#4e79a7", "#59a14f"];          // EM components
+const TCOL = ["#ff8c00", "#a034f0", "#159090"];          // true labels (reveal)
+const CMIX = "#212121", CGREY = "#b0b0b0";
+const SDFLOOR = 1e-4;
+
+// =====================================================================
+// EM machinery (exactly the notes' recipe)
+// =====================================================================
+const state = {
+  ds: "synth2", dim: 1, M: 2, seed: 1, reveal: false,
+  al: [], mu: [], sd: [],                    // parameters
+  gam: null,                                 // responsibilities (null until first E-step)
+  phase: "E",                                // which step runs NEXT
+  iter: 0, llTrace: [],
+};
+
+function rows() { return DATASETS[state.ds].rows; }
+function X(i) { return rows()[i].x.slice(0, state.dim); }
+function n() { return rows().length; }
+
+function dnorm(x, m, s) { return Math.exp(-0.5 * ((x - m) / s) ** 2) / (Math.sqrt(2 * Math.PI) * s); }
+function compDens(m, v) {
+  let d = 1;
+  for (let j = 0; j < state.dim; j++) d *= dnorm(v[j], state.mu[m][j], state.sd[m][j]);
+  return d;
+}
+function totDens(v) {                        // mixture density
+  let s = 0;
+  for (let m = 0; m < state.M; m++) s += state.al[m] * compDens(m, v);
+  return s;
+}
+function loglik() {
+  let l = 0;
+  for (let i = 0; i < n(); i++) l += Math.log(totDens(X(i)));
+  return l;
+}
+
+function init() {                            // the notes' random initialization
+  const rnd = d3.randomLcg(0.3 + 0.017 * state.seed);
+  const N = n(), D = state.dim;
+  // sigma_m^2 = variance of ALL the data (same for every m), per dim
+  const dataSd = d3.range(D).map(j => {
+    const col = rows().map(r => r.x[j]);
+    const mn = d3.mean(col);
+    return Math.sqrt(d3.sum(col, v => (v - mn) * (v - mn)) / (N - 1));
+  });
+  // mu_m = random distinct data points
+  const picks = new Set();
+  while (picks.size < state.M) picks.add(Math.floor(rnd() * N));
+  state.mu = [...picks].map(i => X(i).slice());
+  state.sd = d3.range(state.M).map(() => dataSd.slice());
+  state.al = d3.range(state.M).map(() => 1 / state.M);
+  state.gam = null;
+  state.phase = "E";
+  state.iter = 0;
+  state.llTrace = [loglik()];
+}
+
+function stepE() {
+  const N = n();
+  state.gam = [];
+  for (let i = 0; i < N; i++) {
+    const w = d3.range(state.M).map(m => state.al[m] * compDens(m, X(i)));
+    const tot = d3.sum(w);
+    state.gam.push(w.map(v => v / tot));
+  }
+  state.phase = "M";
+}
+
+function stepM() {
+  const N = n(), D = state.dim, G = state.gam;
+  for (let m = 0; m < state.M; m++) {
+    const Nm = d3.sum(d3.range(N), i => G[i][m]);
+    for (let j = 0; j < D; j++) {
+      const mu = d3.sum(d3.range(N), i => G[i][m] * X(i)[j]) / Nm;
+      const v = d3.sum(d3.range(N), i => G[i][m] * (X(i)[j] - mu) ** 2) / Nm;
+      state.mu[m][j] = mu;
+      state.sd[m][j] = Math.max(SDFLOOR, Math.sqrt(v));
+    }
+    state.al[m] = Nm / N;
+  }
+  state.phase = "E";
+  state.iter++;
+  state.llTrace.push(loglik());
+}
+
+// =====================================================================
+// Rendering
+// =====================================================================
+const stage = document.getElementById("em-stage");
+const svg = d3.select(stage.querySelector("svg"));
+const MAR = { l: 50, r: 16, t: 12, b: 40 };
+const fmt2 = v => v.toFixed(2);
+
+function typeset(els) {
+  if (window.MathJax && MathJax.typesetPromise) MathJax.typesetPromise(els).catch(() => {});
+}
+function clearStage() {
+  svg.selectAll("*").remove();
+  for (const el of stage.querySelectorAll(".axl, .axl-y")) el.remove();
+}
+function addLabel(cls, content, left, top, isMath) {
+  const sp = document.createElement("span");
+  sp.className = cls;
+  sp.style.left = left + "px"; sp.style.top = top + "px";
+  if (isMath) { sp.innerHTML = content; typeset([sp]); } else sp.textContent = content;
+  stage.appendChild(sp);
+  return sp;
+}
+function extentJ(j, pad) {
+  const col = rows().map(r => r.x[j]);
+  const lo = d3.min(col), hi = d3.max(col), p = (hi - lo) * pad;
+  return [lo - p, hi + p];
+}
+function blend(gam) {                        // responsibility-weighted color
+  if (!gam) return CGREY;
+  let r = 0, g = 0, b = 0;
+  for (let m = 0; m < state.M; m++) {
+    const c = d3.rgb(CCOL[m]);
+    r += gam[m] * c.r; g += gam[m] * c.g; b += gam[m] * c.b;
+  }
+  return d3.rgb(r, g, b).formatHex();
+}
+
+function render1D() {
+  const W = 640, H = 430, RUG = 34;
+  svg.attr("width", W).attr("height", H);
+  const cw = W - MAR.l - MAR.r, ch = H - MAR.t - MAR.b;
+  const g = svg.append("g").attr("transform", `translate(${MAR.l},${MAR.t})`);
+  const dom = extentJ(0, 0.08);
+  const xs = d3.scaleLinear().domain(dom).range([0, cw]);
+  const NG = 400;
+  const grid = d3.range(NG + 1).map(i => dom[0] + (dom[1] - dom[0]) * i / NG);
+  const mixv = grid.map(x => totDens([x]));
+  // histogram of the data on the DENSITY scale (bar area = fraction of points), behind everything.
+  // NB: d3.bin().thresholds(30) would snap edges to nice ticks and leave partial edge bins, so the
+  // thresholds are set explicitly to NBIN equal bins and every bar is normalized by its OWN width.
+  const NBIN = 30;
+  const edges = d3.range(1, NBIN).map(i => dom[0] + (dom[1] - dom[0]) * i / NBIN);
+  const bins = d3.bin().domain(dom).thresholds(edges)(rows().map(r => r.x[0]));
+  const dens = b => b.length / (n() * (b.x1 - b.x0));
+  const histv = bins.map(dens);
+  const ymax = Math.max(d3.max(mixv), d3.max(histv)) * 1.12;
+  const ys = d3.scaleLinear().domain([0, ymax]).range([ch - RUG, 0]);
+  g.selectAll("rect.h").data(bins).join("rect")
+    .attr("x", b => xs(b.x0) + 0.5).attr("y", b => ys(dens(b)))
+    .attr("width", b => Math.max(0, xs(b.x1) - xs(b.x0) - 1))
+    .attr("height", b => ys(0) - ys(dens(b)))
+    .attr("fill", "#e0e0e0");
+  render1D.hist = { bins, histv };
+  // weighted component curves + mixture
+  for (let m = 0; m < state.M; m++) {
+    g.append("path")
+      .attr("d", d3.line().x(x => xs(x)).y(x => ys(Math.min(ymax, state.al[m] * compDens(m, [x]))))(grid))
+      .attr("fill", "none").attr("stroke", CCOL[m]).attr("stroke-width", 2);
+  }
+  g.append("path")
+    .attr("d", d3.line().x((x, i) => xs(x)).y((x, i) => ys(Math.min(ymax, mixv[i])))(grid))
+    .attr("fill", "none").attr("stroke", CMIX).attr("stroke-width", 2.6).attr("opacity", 0.85);
+  // rug: points colored by responsibility blend, jittered
+  const rj = d3.randomLcg(99);
+  const rug = g.append("g").attr("transform", `translate(0,${ch - RUG + 8})`);
+  rows().forEach((r, i) => {
+    rug.append("circle")
+      .attr("cx", xs(r.x[0])).attr("cy", 4 + rj() * (RUG - 16)).attr("r", 3)
+      .attr("fill", blend(state.gam ? state.gam[i] : null))
+      .attr("stroke", state.reveal ? TCOL[r.t] : "#fff")
+      .attr("stroke-width", state.reveal ? 1.8 : 0.6);
+  });
+  g.append("line").attr("x1", 0).attr("x2", cw).attr("y1", ch - RUG).attr("y2", ch - RUG)
+    .attr("stroke", "#ccc");
+  g.append("g").attr("transform", `translate(0,${ch})`).call(d3.axisBottom(xs).ticks(8).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  g.append("g").call(d3.axisLeft(ys).ticks(5).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  const cfg = DATASETS[state.ds];
+  addLabel("axl axl-x", cfg.axis[0], MAR.l + cw / 2, H - 14, state.ds !== "penguins");
+  addLabel("axl axl-y", "\\(p(x)\\)", 4, MAR.t + (ch - RUG) / 2, true);
+}
+
+function render2D() {
+  const W = 560, H = 520; svg.attr("width", W).attr("height", H);
+  const cw = W - MAR.l - MAR.r, ch = H - MAR.t - MAR.b;
+  const g = svg.append("g").attr("transform", `translate(${MAR.l},${MAR.t})`);
+  const dx = extentJ(0, 0.08), dy = extentJ(1, 0.08);
+  const xs = d3.scaleLinear().domain(dx).range([0, cw]);
+  const ys = d3.scaleLinear().domain(dy).range([ch, 0]);
+  // component 1s/2s ellipses + mean crosses
+  for (let m = 0; m < state.M; m++) {
+    for (const k of [1, 2]) {
+      g.append("ellipse")
+        .attr("cx", xs(state.mu[m][0])).attr("cy", ys(state.mu[m][1]))
+        .attr("rx", Math.abs(xs(state.mu[m][0] + k * state.sd[m][0]) - xs(state.mu[m][0])))
+        .attr("ry", Math.abs(ys(state.mu[m][1] + k * state.sd[m][1]) - ys(state.mu[m][1])))
+        .attr("fill", "none").attr("stroke", CCOL[m])
+        .attr("stroke-width", k === 1 ? 2.2 : 1.2).attr("stroke-dasharray", "5,3");
+    }
+    g.append("line").attr("x1", xs(state.mu[m][0]) - 7).attr("x2", xs(state.mu[m][0]) + 7)
+      .attr("y1", ys(state.mu[m][1])).attr("y2", ys(state.mu[m][1]))
+      .attr("stroke", CCOL[m]).attr("stroke-width", 2.5);
+    g.append("line").attr("x1", xs(state.mu[m][0])).attr("x2", xs(state.mu[m][0]))
+      .attr("y1", ys(state.mu[m][1]) - 7).attr("y2", ys(state.mu[m][1]) + 7)
+      .attr("stroke", CCOL[m]).attr("stroke-width", 2.5);
+  }
+  // data points colored by responsibility blend
+  rows().forEach((r, i) => {
+    g.append("circle").attr("cx", xs(r.x[0])).attr("cy", ys(r.x[1])).attr("r", 3.4)
+      .attr("fill", blend(state.gam ? state.gam[i] : null))
+      .attr("stroke", state.reveal ? TCOL[r.t] : "#fff")
+      .attr("stroke-width", state.reveal ? 1.8 : 0.7);
+  });
+  g.append("g").attr("transform", `translate(0,${ch})`).call(d3.axisBottom(xs).ticks(7).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  g.append("g").call(d3.axisLeft(ys).ticks(7).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  const cfg = DATASETS[state.ds];
+  addLabel("axl axl-x", cfg.axis[0], MAR.l + cw / 2, H - 14, state.ds !== "penguins");
+  addLabel("axl axl-y", cfg.axis[1], 4, MAR.t + ch / 2, state.ds !== "penguins");
+}
+
+function renderLL() {
+  const W = 340, H = 200;
+  const svgL = d3.select("#em-ll");
+  svgL.selectAll("*").remove();
+  svgL.attr("width", W).attr("height", H);
+  const mar = { l: 52, r: 10, t: 8, b: 30 };
+  const cw = W - mar.l - mar.r, ch = H - mar.t - mar.b;
+  const g = svgL.append("g").attr("transform", `translate(${mar.l},${mar.t})`);
+  const tr = state.llTrace.map(l => l / n());
+  const xs = d3.scaleLinear().domain([0, Math.max(8, tr.length - 1)]).range([0, cw]);
+  const ys = d3.scaleLinear().domain([d3.min(tr), d3.max(tr) + 1e-9]).range([ch, 0]).nice();
+  g.append("path")
+    .attr("d", d3.line().x((v, i) => xs(i)).y(v => ys(v))(tr))
+    .attr("fill", "none").attr("stroke", "#f4a300").attr("stroke-width", 2);
+  g.selectAll("circle").data(tr).join("circle")
+    .attr("cx", (v, i) => xs(i)).attr("cy", v => ys(v)).attr("r", 3.4)
+    .attr("fill", "#f4a300").attr("stroke", "#fff").attr("stroke-width", 0.8);
+  g.append("g").attr("transform", `translate(0,${ch})`)
+    .call(d3.axisBottom(xs).ticks(Math.min(8, tr.length)).tickFormat(d3.format("d")).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  g.append("g").call(d3.axisLeft(ys).ticks(5).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  svgL.append("text").attr("x", mar.l + cw / 2).attr("y", H - 4)
+    .attr("text-anchor", "middle").attr("font-size", 12).attr("fill", "#333").text("iteration");
+
+  const read = document.getElementById("em-llread");
+  read.textContent = `current ℓ/n = ${(loglik() / n()).toFixed(4)}`;
+}
+
+function renderParams() {
+  const D = state.dim;
+  const head = `<tr><th>comp.</th><th>π</th>` +
+    d3.range(D).map(j => `<th>μ<sub>${j + 1}</sub></th><th>σ<sub>${j + 1}</sub></th>`).join("") +
+    `<th>N<sub>m</sub></th></tr>`;
+  const body = d3.range(state.M).map(m => {
+    const Nm = state.gam ? d3.sum(state.gam, gi => gi[m]) : null;
+    return `<tr><td><span class="sw" style="display:inline-block;width:10px;height:10px;border-radius:50%;` +
+      `background:${CCOL[m]};margin-right:5px"></span>${m + 1}</td><td>${fmt2(state.al[m])}</td>` +
+      d3.range(D).map(j => `<td>${fmt2(state.mu[m][j])}</td><td>${state.sd[m][j] < 0.005 ? state.sd[m][j].toExponential(0) : fmt2(state.sd[m][j])}</td>`).join("") +
+      `<td>${Nm === null ? "–" : Nm.toFixed(1)}</td></tr>`;
+  }).join("");
+  document.getElementById("em-params").innerHTML = head + body;
+}
+
+function renderStatus() {
+  const nextE = state.phase === "E";
+  document.getElementById("em-step").textContent = nextE ? "next: E-step" : "next: M-step";
+  document.getElementById("form-e").classList.toggle("active", nextE);
+  document.getElementById("form-m").classList.toggle("active", !nextE);
+  document.getElementById("em-status").innerHTML =
+    `Iteration <b>${state.iter}</b> — next: <b>${nextE
+      ? "E-step (compute responsibilities γ from the current parameters — recolors the points)"
+      : "M-step (update π, μ, σ² from γ — moves the curves)"}</b>.` +
+    (state.gam === null ? " Points are gray because no E-step has run yet: this is the raw initialization (random data points as means, one shared σ, π = 1/M)." : "");
+  document.getElementById("em-legend").innerHTML =
+    d3.range(state.M).map(m => `<span class="sw" style="background:${CCOL[m]}"></span>component ${m + 1}`).join("") +
+    `<span style="color:#888; margin-left:12px">point color = responsibility blend</span>` +
+    (state.reveal ? DATASETS[state.ds].tLabels.filter(t => t).map((t, k) =>
+      `<span class="sw" style="background:#fff;border:2.5px solid ${TCOL[k]}"></span>${t} (truth)`).join("") +
+      `<span style="color:#888; margin-left:12px">component numbering is arbitrary — EM may permute colors</span>` : "");
+}
+
+function renderAll() {
+  clearStage();
+  if (state.dim === 1) render1D(); else render2D();
+  renderLL();
+  renderParams();
+  renderStatus();
+}
+
+// =====================================================================
+// Wiring
+// =====================================================================
+let runTimer = null;
+function stopRun() { if (runTimer) { clearInterval(runTimer); runTimer = null; document.getElementById("em-run").textContent = "run to convergence"; } }
+
+function main() {
+  if (main.done) return;                     // jsdom fires load twice
+  main.done = true;
+  for (const r of document.querySelectorAll('input[name="em-ds"]')) {
+    r.addEventListener("change", () => { if (r.checked) { stopRun(); state.ds = r.value; init(); renderAll(); } });
+  }
+  for (const r of document.querySelectorAll('input[name="em-dim"]')) {
+    r.addEventListener("change", () => { if (r.checked) { stopRun(); state.dim = +r.value; init(); renderAll(); } });
+  }
+  for (const r of document.querySelectorAll('input[name="em-m"]')) {
+    r.addEventListener("change", () => { if (r.checked) { stopRun(); state.M = +r.value; init(); renderAll(); } });
+  }
+  document.getElementById("em-step").addEventListener("click", () => {
+    stopRun();
+    if (state.phase === "E") stepE(); else stepM();
+    renderAll();
+  });
+  document.getElementById("em-run").addEventListener("click", () => {
+    if (runTimer) { stopRun(); return; }
+    document.getElementById("em-run").textContent = "stop";
+    runTimer = setInterval(() => {           // one STEP per tick: E, then M, then E, ...
+      if (state.phase === "E") { stepE(); renderAll(); return; }
+      const before = state.llTrace[state.llTrace.length - 1];
+      stepM();
+      renderAll();
+      const after = state.llTrace[state.llTrace.length - 1];
+      if (Math.abs(after - before) < 1e-7 || state.iter > 300) {
+        stopRun();
+        document.getElementById("em-status").innerHTML +=
+          " <b style='color:#2e7d32'>Converged.</b> Re-initialize and run again — different starts can reach different local optima (compare final ℓ/n).";
+      }
+    }, 400);
+  });
+  document.getElementById("em-reinit").addEventListener("click", () => {
+    stopRun(); state.seed++; init(); renderAll();
+  });
+  document.getElementById("em-reveal").addEventListener("change", ev => {
+    state.reveal = ev.target.checked; renderAll();
+  });
+
+  init();
+  renderAll();
+  const cap = document.getElementById("em-cap");
+  cap.innerHTML = "";
+  // Try: step through a few E/M rounds by hand, then <b>run to convergence</b>. " +
+  //   "On <b>penguins</b>, EM only ever sees the bill measurements — converge, then tick " +
+  //   "<b>reveal true labels</b>: the unsupervised clusters largely recover the species. " +
+  //   "With M = 2 on the 3-cluster data (or M = 3 on 2 clusters), watch how EM copes with the wrong M.";
+  typeset([cap]);
+
+  window.__emApi = {
+    stepE, stepM, init, loglik,
+    setDs: d => { state.ds = d; document.querySelector(`input[name="em-ds"][value="${d}"]`).checked = true; init(); renderAll(); },
+    setDim: d => { state.dim = d; document.querySelector(`input[name="em-dim"][value="${d}"]`).checked = true; init(); renderAll(); },
+    setM: m => { state.M = m; document.querySelector(`input[name="em-m"][value="${m}"]`).checked = true; init(); renderAll(); },
+    renderAll, state, rows, n,
+  };
+}
+window.addEventListener("load", main);
+</script>
+
+<!--
+  HOW IT WORKS (matches the course notes)
+  - Chicken & egg: given parameters -> responsibilities are a Bayes
+    classifier; given responsibilities -> parameters are weighted MLE.
+    EM alternates: E-step gamma_im = pi_m N(x_i)/sum_j pi_j N(x_i);
+    M-step N_m = sum_i gamma_im, mu_m = weighted mean, sigma_m^2 = weighted
+    variance (per dim, diagonal), pi_m = N_m/n. Repeat.
+  - Initialization exactly as in the notes: mu_m = random (distinct) data
+    points, sigma_m^2 = the variance of all the data (same for every m),
+    pi_m = 1/M. "Re-initialize" advances the seed.
+  - Log-likelihood l = sum_i log sum_m pi_m N(x_i; mu_m, sigma_m^2) is
+    recorded after init and after each M-step; EM guarantees it is
+    non-decreasing (visible in the trace). Convergence: change < 1e-7.
+  - "Run to convergence" performs ONE step per 0.4 s (E, then M, then E,
+    ...) so the alternation stays visible; convergence: LL change < 1e-7.
+  - SDFLOOR (1e-4) guards the M-step against the degenerate sigma -> 0
+    spike (the notes' MLE -> infinity counterexample).
+  - Point colors are responsibility BLENDS (soft assignments), gray before
+    the first E-step. True labels (species / generating cluster) are shown
+    only via the reveal toggle and are never used by the algorithm.
+
+  SOURCES (kept in source; not displayed in the applet UI)
+  - Course notes: EM steps (1)-(4), initialization recipe, responsibility
+    formula and reading, MLE -> infinity counterexample.
+  - Data: Palmer penguins (Horst, Hill & Gorman 2020, CC-0), same rows as
+    the other applets (n = 342, NA dropped); synthetic clusters are seeded
+    pedagogical constructions with known labels.
+-->
+</body>
+</html>
