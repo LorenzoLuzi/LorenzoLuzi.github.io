@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KDE: Kernels &amp; Bandwidth</title>
+  <link rel="stylesheet" href="../styling/global.css">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; color: #222; }
+    h1 { font-size: 24px; }
+    .kk-intro, .kk-eq { max-width: 980px; }
+    .kk-eq { font-size: 15px; margin: 10px 0; }
+    .kk-controls { margin: 12px 0; display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; }
+    .kk-controls fieldset { border: 1px solid #ccc; border-radius: 6px; padding: 8px 12px; }
+    .kk-controls legend { font-weight: bold; font-size: 13px; padding: 0 6px; }
+    .kk-row { margin: 5px 0; font-size: 14px; }
+    .kk-radio { margin-right: 10px; white-space: nowrap; }
+    .kk-srow { display: flex; align-items: center; gap: 8px; margin: 5px 0; font-size: 14px; }
+    .kk-srow input[type="range"] { width: 190px; }
+    .kk-srow .val { width: 84px; font-variant-numeric: tabular-nums; }
+    .kk-gallery { display: flex; gap: 10px; }
+    .kk-kern { border: 2px solid #ddd; border-radius: 6px; padding: 4px 6px 2px 6px; cursor: pointer; text-align: center; font-size: 12.5px; background: #fff; }
+    .kk-kern:hover { border-color: #999; }
+    .kk-kern.sel { border-color: #1976d2; background: #f2f8ff; }
+    .kk-kern svg { display: block; }
+    .kk-main { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+    .kk-stage { position: relative; display: inline-block; }
+    .kk-stage svg { display: block; }
+    .axl { position: absolute; font-size: 13px; color: #333; pointer-events: none; }
+    .axl-x { transform: translateX(-50%); }
+    .axl-y { transform: translate(-50%, -50%) rotate(-90deg); left: 4px; white-space: nowrap; }
+    .kk-side { max-width: 420px; }
+    .kk-side .ttl { font-size: 14px; margin: 2px 0; }
+    .ticktext { font-size: 10px; fill: #555; }
+    .kk-cap { font-size: 14px; margin-top: 8px; max-width: 820px; }
+    .kk-legend { font-size: 13.5px; margin: 6px 0; max-width: 980px; }
+    .kk-legend .ln { display: inline-block; width: 20px; height: 0; border-top: 3px solid; margin: 0 4px 3px 12px; vertical-align: middle; }
+    .kk-legend .ln.dash { border-top-style: dashed; }
+    .kk-note { font-size: 13px; color: #555; margin-top: 6px; max-width: 420px; }
+    button { font-size: 13.5px; padding: 4px 10px; border-radius: 5px; border: 1px solid #999; background: #f5f5f5; cursor: pointer; }
+    button:hover { background: #eee; }
+    body[data-kdim="2"] .d1only { display: none; }
+  </style>
+
+  <script src="https://d3js.org/d3.v7.js"></script>
+  <script>window.MathJax = {
+    tex: { inlineMath: [['\\(', '\\)'], ['$', '$']] },
+    svg: { fontCache: 'global' }
+  };</script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</head>
+
+<body data-kdim="1">
+  <h1>KDE: Kernels &amp; Bandwidth</h1>
+  <p class="kk-intro">
+    An applet showing how kernel desnsity estimation (KDE) works for different kernels.
+  </p>
+
+  <div class="kk-eq">
+    \( p(x) = \dfrac{1}{nh} \sum_{i=1}^{n} K\!\left(\dfrac{x - x_i}{h}\right) \)
+    <!-- &nbsp;&mdash;&nbsp; valid whenever \(K\) satisfies:
+    \( \textbf{(1)}\; K(x) \ge 0 \;\;\forall x \qquad
+       \textbf{(2)}\; \int K(x)\,dx = 1 \qquad
+       \textbf{(3)}\; K(-x) = K(x) \)
+    &nbsp; (in 2D we use the product \(K(u_1)K(u_2)\) and \(1/h^2\)). -->
+  </div>
+
+  <div class="kk-controls">
+    <fieldset>
+      <legend>Kernel K</legend>
+      <div class="kk-gallery" id="kk-gallery"></div>
+    </fieldset>
+    <fieldset>
+      <legend>Dimension</legend>
+      <div class="kk-row">
+        <label class="kk-radio"><input type="radio" name="kk-dim" value="1" checked> 1D</label>
+        <label class="kk-radio"><input type="radio" name="kk-dim" value="2"> 2D</label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Data</legend>
+      <div class="kk-row">
+        <label class="kk-radio"><input type="radio" name="kk-ds" value="bimodal" checked> bimodal (synthetic)</label>
+        <label class="kk-radio"><input type="radio" name="kk-ds" value="uniform"> uniform (edges!)</label>
+        <label class="kk-radio"><input type="radio" name="kk-ds" value="penguins"> penguins (real)</label>
+      </div>
+      <div class="kk-srow">
+        <span>n</span>
+        <input type="range" id="kk-n" min="10" max="400" step="5" value="120" style="width:150px">
+        <span class="val" id="kk-nv">120</span>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Bandwidth h</legend>
+      <div class="kk-srow">
+        <input type="range" id="kk-h" min="0" max="100" step="1" value="50">
+        <span class="val" id="kk-hv"></span>
+      </div>
+      <div class="kk-row d1only"><label class="kk-radio"><input type="checkbox" id="kk-bumps" checked> show the n bumps</label></div>
+    </fieldset>
+  </div>
+
+  <div class="kk-legend" id="kk-legend"></div>
+
+  <div class="kk-main">
+    <div class="kk-stage" id="kk-stage"><svg></svg></div>
+    <div class="kk-side">
+      <div class="ttl">5-fold CV: held-out log-likelihood per point vs \(h\)</div>
+      <svg id="kk-cv"></svg>
+      <div class="kk-row"><button id="kk-snap">snap h to CV best</button> <span id="kk-cvbest" style="font-size:13px"></span></div>
+    </div>
+  </div>
+  <div class="kk-cap" id="kk-cap"></div>
+
+<script>
+"use strict";
+
+// =====================================================================
+// ---- DATA (swap here) ----
+// 1) Palmer penguins (same rows as the other applets; NA dropped):
+//    bill length (1D), + bill depth (2D).
+// 2) Seeded synthetic samples WITH known true densities:
+//    bimodal - a 2-component GMM; uniform - a box (the notes' "edges"
+//    example: compact kernels respect the cliff, the Gaussian smears it).
+// =====================================================================
+const RAW = {"species": ["Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Adelie", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Gentoo", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap", "Chinstrap"], "bill_length_mm": [39.1, 39.5, 40.3, 36.7, 39.3, 38.9, 39.2, 34.1, 42.0, 37.8, 37.8, 41.1, 38.6, 34.6, 36.6, 38.7, 42.5, 34.4, 46.0, 37.8, 37.7, 35.9, 38.2, 38.8, 35.3, 40.6, 40.5, 37.9, 40.5, 39.5, 37.2, 39.5, 40.9, 36.4, 39.2, 38.8, 42.2, 37.6, 39.8, 36.5, 40.8, 36.0, 44.1, 37.0, 39.6, 41.1, 37.5, 36.0, 42.3, 39.6, 40.1, 35.0, 42.0, 34.5, 41.4, 39.0, 40.6, 36.5, 37.6, 35.7, 41.3, 37.6, 41.1, 36.4, 41.6, 35.5, 41.1, 35.9, 41.8, 33.5, 39.7, 39.6, 45.8, 35.5, 42.8, 40.9, 37.2, 36.2, 42.1, 34.6, 42.9, 36.7, 35.1, 37.3, 41.3, 36.3, 36.9, 38.3, 38.9, 35.7, 41.1, 34.0, 39.6, 36.2, 40.8, 38.1, 40.3, 33.1, 43.2, 35.0, 41.0, 37.7, 37.8, 37.9, 39.7, 38.6, 38.2, 38.1, 43.2, 38.1, 45.6, 39.7, 42.2, 39.6, 42.7, 38.6, 37.3, 35.7, 41.1, 36.2, 37.7, 40.2, 41.4, 35.2, 40.6, 38.8, 41.5, 39.0, 44.1, 38.5, 43.1, 36.8, 37.5, 38.1, 41.1, 35.6, 40.2, 37.0, 39.7, 40.2, 40.6, 32.1, 40.7, 37.3, 39.0, 39.2, 36.6, 36.0, 37.8, 36.0, 41.5, 46.1, 50.0, 48.7, 50.0, 47.6, 46.5, 45.4, 46.7, 43.3, 46.8, 40.9, 49.0, 45.5, 48.4, 45.8, 49.3, 42.0, 49.2, 46.2, 48.7, 50.2, 45.1, 46.5, 46.3, 42.9, 46.1, 44.5, 47.8, 48.2, 50.0, 47.3, 42.8, 45.1, 59.6, 49.1, 48.4, 42.6, 44.4, 44.0, 48.7, 42.7, 49.6, 45.3, 49.6, 50.5, 43.6, 45.5, 50.5, 44.9, 45.2, 46.6, 48.5, 45.1, 50.1, 46.5, 45.0, 43.8, 45.5, 43.2, 50.4, 45.3, 46.2, 45.7, 54.3, 45.8, 49.8, 46.2, 49.5, 43.5, 50.7, 47.7, 46.4, 48.2, 46.5, 46.4, 48.6, 47.5, 51.1, 45.2, 45.2, 49.1, 52.5, 47.4, 50.0, 44.9, 50.8, 43.4, 51.3, 47.5, 52.1, 47.5, 52.2, 45.5, 49.5, 44.5, 50.8, 49.4, 46.9, 48.4, 51.1, 48.5, 55.9, 47.2, 49.1, 47.3, 46.8, 41.7, 53.4, 43.3, 48.1, 50.5, 49.8, 43.5, 51.5, 46.2, 55.1, 44.5, 48.8, 47.2, 46.8, 50.4, 45.2, 49.9, 46.5, 50.0, 51.3, 45.4, 52.7, 45.2, 46.1, 51.3, 46.0, 51.3, 46.6, 51.7, 47.0, 52.0, 45.9, 50.5, 50.3, 58.0, 46.4, 49.2, 42.4, 48.5, 43.2, 50.6, 46.7, 52.0, 50.5, 49.5, 46.4, 52.8, 40.9, 54.2, 42.5, 51.0, 49.7, 47.5, 47.6, 52.0, 46.9, 53.5, 49.0, 46.2, 50.9, 45.5, 50.9, 50.8, 50.1, 49.0, 51.5, 49.8, 48.1, 51.4, 45.7, 50.7, 42.5, 52.2, 45.2, 49.3, 50.2, 45.6, 51.9, 46.8, 45.7, 55.8, 43.5, 49.6, 50.8, 50.2], "bill_depth_mm": [18.7, 17.4, 18.0, 19.3, 20.6, 17.8, 19.6, 18.1, 20.2, 17.1, 17.3, 17.6, 21.2, 21.1, 17.8, 19.0, 20.7, 18.4, 21.5, 18.3, 18.7, 19.2, 18.1, 17.2, 18.9, 18.6, 17.9, 18.6, 18.9, 16.7, 18.1, 17.8, 18.9, 17.0, 21.1, 20.0, 18.5, 19.3, 19.1, 18.0, 18.4, 18.5, 19.7, 16.9, 18.8, 19.0, 18.9, 17.9, 21.2, 17.7, 18.9, 17.9, 19.5, 18.1, 18.6, 17.5, 18.8, 16.6, 19.1, 16.9, 21.1, 17.0, 18.2, 17.1, 18.0, 16.2, 19.1, 16.6, 19.4, 19.0, 18.4, 17.2, 18.9, 17.5, 18.5, 16.8, 19.4, 16.1, 19.1, 17.2, 17.6, 18.8, 19.4, 17.8, 20.3, 19.5, 18.6, 19.2, 18.8, 18.0, 18.1, 17.1, 18.1, 17.3, 18.9, 18.6, 18.5, 16.1, 18.5, 17.9, 20.0, 16.0, 20.0, 18.6, 18.9, 17.2, 20.0, 17.0, 19.0, 16.5, 20.3, 17.7, 19.5, 20.7, 18.3, 17.0, 20.5, 17.0, 18.6, 17.2, 19.8, 17.0, 18.5, 15.9, 19.0, 17.6, 18.3, 17.1, 18.0, 17.9, 19.2, 18.5, 18.5, 17.6, 17.5, 17.5, 20.1, 16.5, 17.9, 17.1, 17.2, 15.5, 17.0, 16.8, 18.7, 18.6, 18.4, 17.8, 18.1, 17.1, 18.5, 13.2, 16.3, 14.1, 15.2, 14.5, 13.5, 14.6, 15.3, 13.4, 15.4, 13.7, 16.1, 13.7, 14.6, 14.6, 15.7, 13.5, 15.2, 14.5, 15.1, 14.3, 14.5, 14.5, 15.8, 13.1, 15.1, 14.3, 15.0, 14.3, 15.3, 15.3, 14.2, 14.5, 17.0, 14.8, 16.3, 13.7, 17.3, 13.6, 15.7, 13.7, 16.0, 13.7, 15.0, 15.9, 13.9, 13.9, 15.9, 13.3, 15.8, 14.2, 14.1, 14.4, 15.0, 14.4, 15.4, 13.9, 15.0, 14.5, 15.3, 13.8, 14.9, 13.9, 15.7, 14.2, 16.8, 14.4, 16.2, 14.2, 15.0, 15.0, 15.6, 15.6, 14.8, 15.0, 16.0, 14.2, 16.3, 13.8, 16.4, 14.5, 15.6, 14.6, 15.9, 13.8, 17.3, 14.4, 14.2, 14.0, 17.0, 15.0, 17.1, 14.5, 16.1, 14.7, 15.7, 15.8, 14.6, 14.4, 16.5, 15.0, 17.0, 15.5, 15.0, 13.8, 16.1, 14.7, 15.8, 14.0, 15.1, 15.2, 15.9, 15.2, 16.3, 14.1, 16.0, 15.7, 16.2, 13.7, 14.3, 15.7, 14.8, 16.1, 17.9, 19.5, 19.2, 18.7, 19.8, 17.8, 18.2, 18.2, 18.9, 19.9, 17.8, 20.3, 17.3, 18.1, 17.1, 19.6, 20.0, 17.8, 18.6, 18.2, 17.3, 17.5, 16.6, 19.4, 17.9, 19.0, 18.4, 19.0, 17.8, 20.0, 16.6, 20.8, 16.7, 18.8, 18.6, 16.8, 18.3, 20.7, 16.6, 19.9, 19.5, 17.5, 19.1, 17.0, 17.9, 18.5, 17.9, 19.6, 18.7, 17.3, 16.4, 19.0, 17.3, 19.7, 17.3, 18.8, 16.6, 19.9, 18.8, 19.4, 19.5, 16.5, 17.0, 19.8, 18.1, 18.2, 19.0, 18.7], "flipper_length_mm": [181.0, 186.0, 195.0, 193.0, 190.0, 181.0, 195.0, 193.0, 190.0, 186.0, 180.0, 182.0, 191.0, 198.0, 185.0, 195.0, 197.0, 184.0, 194.0, 174.0, 180.0, 189.0, 185.0, 180.0, 187.0, 183.0, 187.0, 172.0, 180.0, 178.0, 178.0, 188.0, 184.0, 195.0, 196.0, 190.0, 180.0, 181.0, 184.0, 182.0, 195.0, 186.0, 196.0, 185.0, 190.0, 182.0, 179.0, 190.0, 191.0, 186.0, 188.0, 190.0, 200.0, 187.0, 191.0, 186.0, 193.0, 181.0, 194.0, 185.0, 195.0, 185.0, 192.0, 184.0, 192.0, 195.0, 188.0, 190.0, 198.0, 190.0, 190.0, 196.0, 197.0, 190.0, 195.0, 191.0, 184.0, 187.0, 195.0, 189.0, 196.0, 187.0, 193.0, 191.0, 194.0, 190.0, 189.0, 189.0, 190.0, 202.0, 205.0, 185.0, 186.0, 187.0, 208.0, 190.0, 196.0, 178.0, 192.0, 192.0, 203.0, 183.0, 190.0, 193.0, 184.0, 199.0, 190.0, 181.0, 197.0, 198.0, 191.0, 193.0, 197.0, 191.0, 196.0, 188.0, 199.0, 189.0, 189.0, 187.0, 198.0, 176.0, 202.0, 186.0, 199.0, 191.0, 195.0, 191.0, 210.0, 190.0, 197.0, 193.0, 199.0, 187.0, 190.0, 191.0, 200.0, 185.0, 193.0, 193.0, 187.0, 188.0, 190.0, 192.0, 185.0, 190.0, 184.0, 195.0, 193.0, 187.0, 201.0, 211.0, 230.0, 210.0, 218.0, 215.0, 210.0, 211.0, 219.0, 209.0, 215.0, 214.0, 216.0, 214.0, 213.0, 210.0, 217.0, 210.0, 221.0, 209.0, 222.0, 218.0, 215.0, 213.0, 215.0, 215.0, 215.0, 216.0, 215.0, 210.0, 220.0, 222.0, 209.0, 207.0, 230.0, 220.0, 220.0, 213.0, 219.0, 208.0, 208.0, 208.0, 225.0, 210.0, 216.0, 222.0, 217.0, 210.0, 225.0, 213.0, 215.0, 210.0, 220.0, 210.0, 225.0, 217.0, 220.0, 208.0, 220.0, 208.0, 224.0, 208.0, 221.0, 214.0, 231.0, 219.0, 230.0, 214.0, 229.0, 220.0, 223.0, 216.0, 221.0, 221.0, 217.0, 216.0, 230.0, 209.0, 220.0, 215.0, 223.0, 212.0, 221.0, 212.0, 224.0, 212.0, 228.0, 218.0, 218.0, 212.0, 230.0, 218.0, 228.0, 212.0, 224.0, 214.0, 226.0, 216.0, 222.0, 203.0, 225.0, 219.0, 228.0, 215.0, 228.0, 216.0, 215.0, 210.0, 219.0, 208.0, 209.0, 216.0, 229.0, 213.0, 230.0, 217.0, 230.0, 217.0, 222.0, 214.0, 215.0, 222.0, 212.0, 213.0, 192.0, 196.0, 193.0, 188.0, 197.0, 198.0, 178.0, 197.0, 195.0, 198.0, 193.0, 194.0, 185.0, 201.0, 190.0, 201.0, 197.0, 181.0, 190.0, 195.0, 181.0, 191.0, 187.0, 193.0, 195.0, 197.0, 200.0, 200.0, 191.0, 205.0, 187.0, 201.0, 187.0, 203.0, 195.0, 199.0, 195.0, 210.0, 192.0, 205.0, 210.0, 187.0, 196.0, 196.0, 196.0, 201.0, 190.0, 212.0, 187.0, 198.0, 199.0, 201.0, 193.0, 203.0, 187.0, 197.0, 191.0, 203.0, 202.0, 194.0, 206.0, 189.0, 195.0, 207.0, 202.0, 193.0, 210.0, 198.0]};
+
+// Pools are larger than the default n; the n slider takes the first n
+// rows, so growing n only ADDS points (nested samples). The bimodal pool
+// interleaves its two clusters and the penguin pool is a seeded shuffle,
+// so every prefix stays balanced.
+function makeSynth() {
+  const g = d3.randomNormal.source(d3.randomLcg(0.271))(0, 1);
+  const u = d3.randomLcg(0.314);
+  const bimodal = [], uniform = [];
+  for (let i = 0; i < 200; i++) {
+    bimodal.push([-1.6 + 0.7 * g(), -1.0 + 0.7 * g()]);
+    bimodal.push([1.4 + 0.9 * g(), 1.0 + 0.9 * g()]);
+  }
+  for (let i = 0; i < 400; i++) uniform.push([-2 + 4 * u(), -2 + 4 * u()]);
+  return { bimodal, uniform };
+}
+const SYNTH = makeSynth();
+const PENG = d3.shuffler(d3.randomLcg(0.55))(
+  RAW.species.map((s, i) => [RAW.bill_length_mm[i], RAW.bill_depth_mm[i]]));
+
+function dnorm(x, m, s) { return Math.exp(-0.5 * ((x - m) / s) ** 2) / (Math.sqrt(2 * Math.PI) * s); }
+const DATASETS = {
+  bimodal: {
+    rows: SYNTH.bimodal, axis: ["\\(x_1\\)", "\\(x_2\\)"], math: true,
+    truth1: x => 0.5 * dnorm(x, -1.6, 0.7) + 0.5 * dnorm(x, 1.4, 0.9),
+    truth2: v => 0.5 * dnorm(v[0], -1.6, 0.7) * dnorm(v[1], -1.0, 0.7) +
+                 0.5 * dnorm(v[0], 1.4, 0.9) * dnorm(v[1], 1.0, 0.9),
+  },
+  uniform: {
+    rows: SYNTH.uniform, axis: ["\\(x_1\\)", "\\(x_2\\)"], math: true,
+    truth1: x => (Math.abs(x) <= 2 ? 0.25 : 0),
+    truth2: v => (Math.abs(v[0]) <= 2 && Math.abs(v[1]) <= 2 ? 1 / 16 : 0),
+  },
+  penguins: {
+    rows: PENG, axis: ["bill length (mm)", "bill depth (mm)"], math: false,
+    truth1: null, truth2: null,
+  },
+};
+
+// The four kernels from the notes (support [-1,1], except the Gaussian)
+const KERNELS = {
+  boxcar:     { label: "Boxcar",     s2: 1 / 3,               s2tex: "\\tfrac13",
+                K: u => (Math.abs(u) <= 1 ? 0.5 : 0) },
+  triangular: { label: "Triangular", s2: 1 / 6,               s2tex: "\\tfrac16",
+                K: u => (Math.abs(u) <= 1 ? 1 - Math.abs(u) : 0) },
+  cosine:     { label: "Cosine",     s2: 1 - 8 / Math.PI ** 2, s2tex: "1 - \\tfrac{8}{\\pi^2}",
+                K: u => (Math.abs(u) <= 1 ? (Math.PI / 4) * Math.cos(Math.PI * u / 2) : 0) },
+  gaussian:   { label: "Gaussian",   s2: 1,                    s2tex: "1",
+                K: u => Math.exp(-0.5 * u * u) / Math.sqrt(2 * Math.PI) },
+};
+
+// h slider: log scale in units of the data spread, so it works for every
+// dataset; the two extremes reach the spike and the slab
+const HREL = [0.008, 3];
+
+const state = { kern: "gaussian", dim: 1, ds: "bimodal", hIdx: 50, bumps: true, n: 120 };
+
+// =====================================================================
+// KDE math (derives from state)
+// =====================================================================
+function poolSize() { return DATASETS[state.ds].rows.length; }
+function rows() { return DATASETS[state.ds].rows.slice(0, Math.min(state.n, poolSize())); }
+function n() { return rows().length; }
+function dataSd(j) {
+  const col = rows().map(r => r[j]);
+  const m = d3.mean(col);
+  return Math.sqrt(d3.sum(col, v => (v - m) * (v - m)) / col.length);   // 1/n, as in the notes
+}
+function hScale() {                          // data-spread unit for the h slider
+  return state.dim === 1 ? dataSd(0) : (dataSd(0) + dataSd(1)) / 2;
+}
+function hVal() {
+  const t = state.hIdx / 100;
+  return hScale() * HREL[0] * Math.pow(HREL[1] / HREL[0], t);
+}
+function kde1(x, h, idx) {                   // 1D KDE (optionally on a subset)
+  const K = KERNELS[state.kern].K, R = rows();
+  const ii = idx || d3.range(R.length);
+  let s = 0;
+  for (const i of ii) s += K((x - R[i][0]) / h);
+  return s / (ii.length * h);
+}
+function kde2(v, h, idx) {                   // 2D KDE, product kernel
+  const K = KERNELS[state.kern].K, R = rows();
+  const ii = idx || d3.range(R.length);
+  let s = 0;
+  for (const i of ii) s += K((v[0] - R[i][0]) / h) * K((v[1] - R[i][1]) / h);
+  return s / (ii.length * h * h);
+}
+
+// =====================================================================
+// 5-fold CV over a grid of h (recomputed when kernel/data/dim change;
+// the current-h marker just slides along the fixed curve)
+// =====================================================================
+const CVGRID = d3.range(25).map(t => HREL[0] * Math.pow(HREL[1] / HREL[0], t / 24));
+let cv = null;                               // [{h, ll}] with ll possibly -Infinity
+function computeCV() {
+  const N = n();
+  const shuffle = d3.shuffler(d3.randomLcg(0.777));
+  const order = shuffle(d3.range(N));
+  const fold = i => order.indexOf(i) % 5;    // seeded fold assignment
+  const foldOf = new Array(N);
+  order.forEach((i, pos) => { foldOf[i] = pos % 5; });
+  cv = CVGRID.map(rel => {
+    const h = rel * hScale();
+    let tot = 0, dead = false;
+    for (let f = 0; f < 5 && !dead; f++) {
+      const train = d3.range(N).filter(i => foldOf[i] !== f);
+      const test = d3.range(N).filter(i => foldOf[i] === f);
+      for (const i of test) {
+        const p = state.dim === 1 ? kde1(rows()[i][0], h, train) : kde2(rows()[i], h, train);
+        if (p <= 0) { dead = true; break; }  // a held-out point no kernel reaches
+        tot += Math.log(p);
+      }
+    }
+    return { h, ll: dead ? -Infinity : tot / N };
+  });
+}
+function cvBest() {
+  let best = null;
+  for (const c of cv) if (c.ll > -Infinity && (best === null || c.ll > best.ll)) best = c;
+  return best;
+}
+
+// =====================================================================
+// Shared helpers
+// =====================================================================
+const stage = document.getElementById("kk-stage");
+const svg = d3.select(stage.querySelector("svg"));
+const MAR = { l: 50, r: 16, t: 12, b: 40 };
+const CKDE = "#1976d2", CTRUTH = "#9e9e9e", CBUMP = "#90caf9", CCV = "#f4a300";
+
+function typeset(els) {
+  if (window.MathJax && MathJax.typesetPromise) MathJax.typesetPromise(els).catch(() => {});
+}
+function clearStage() {
+  svg.selectAll("*").remove();
+  for (const el of stage.querySelectorAll(".axl, .axl-y")) el.remove();
+}
+function addLabel(cls, content, left, top, isMath) {
+  const sp = document.createElement("span");
+  sp.className = cls;
+  sp.style.left = left + "px"; sp.style.top = top + "px";
+  if (isMath) { sp.innerHTML = content; typeset([sp]); } else sp.textContent = content;
+  stage.appendChild(sp);
+  return sp;
+}
+// Axis limits are FIXED per dataset: computed once from the full pool of
+// points (not the n-subset) and independent of h and the kernel, so the
+// plot never rescales while the sliders move.  x-limits: pool extent padded
+// by 0.75 sd; 1D y-limit: 3x the peak of a Gaussian reference-rule KDE on
+// the pool (spikes at tiny h are clipped at the top, as before).
+const FIXED = {};
+function fixedLims() {
+  const key = state.ds;
+  if (FIXED[key]) return FIXED[key];
+  const pool = DATASETS[key].rows;
+  const ext = j => {
+    const col = pool.map(r => r[j]);
+    const m = d3.mean(col), sd = Math.sqrt(d3.sum(col, v => (v - m) * (v - m)) / col.length);
+    const lo = d3.min(col), hi = d3.max(col);
+    const p = Math.max((hi - lo) * 0.06, 0.75 * sd);
+    return { dom: [lo - p, hi + p], sd };
+  };
+  const e0 = ext(0), e1 = ext(1);
+  // reference KDE peak (Gaussian kernel, Silverman h) on the full pool
+  const col = pool.map(r => r[0]), N = col.length;
+  const hs = 1.06 * e0.sd * Math.pow(N, -0.2);
+  let peak = 0;
+  for (let i = 0; i <= 300; i++) {
+    const x = e0.dom[0] + (e0.dom[1] - e0.dom[0]) * i / 300;
+    let v = 0;
+    for (const xi of col) v += Math.exp(-0.5 * ((x - xi) / hs) ** 2);
+    v /= (N * hs * Math.sqrt(2 * Math.PI));
+    if (v > peak) peak = v;
+  }
+  FIXED[key] = { x: e0.dom, y: e1.dom, ymax1: 3 * peak };
+  return FIXED[key];
+}
+
+// =====================================================================
+// Main views
+// =====================================================================
+function render1D() {
+  const h = hVal();
+  const W = 680, H = 420, RUG = 26;
+  svg.attr("width", W).attr("height", H);
+  const cw = W - MAR.l - MAR.r, ch = H - MAR.t - MAR.b;
+  const g = svg.append("g").attr("transform", `translate(${MAR.l},${MAR.t})`);
+  const dom = fixedLims().x;
+  const xs = d3.scaleLinear().domain(dom).range([0, cw]);
+  const NG = 500;
+  const grid = d3.range(NG + 1).map(i => dom[0] + (dom[1] - dom[0]) * i / NG);
+  const kdev = grid.map(x => kde1(x, h));
+  const cfg = DATASETS[state.ds];
+  // y-scale: fixed per dataset; the h -> 0 spikes are clipped at the top
+  const ymax = fixedLims().ymax1;
+  const clipped = d3.max(kdev) > ymax;
+  const ys = d3.scaleLinear().domain([0, ymax]).range([ch - RUG, 0]);
+  // truth
+  if (cfg.truth1) {
+    g.append("path")
+      .attr("d", d3.line().x(x => xs(x)).y(x => ys(Math.min(ymax, cfg.truth1(x))))(grid))
+      .attr("fill", "none").attr("stroke", CTRUTH).attr("stroke-width", 2).attr("stroke-dasharray", "6,4");
+  }
+  // the n bumps: (1/nh) K((x-xi)/h)
+  if (state.bumps) {
+    const N = n();
+    for (const r of rows()) {
+      g.append("path")
+        .attr("d", d3.line().x(x => xs(x)).y(x => ys(Math.min(ymax, KERNELS[state.kern].K((x - r[0]) / h) / (N * h))))(grid))
+        .attr("fill", "none").attr("stroke", CBUMP).attr("stroke-width", 1).attr("opacity", 0.75);
+    }
+  }
+  // KDE
+  g.append("path")
+    .attr("d", d3.line().x((x, i) => xs(x)).y((x, i) => ys(Math.min(ymax, kdev[i])))(grid))
+    .attr("fill", "none").attr("stroke", CKDE).attr("stroke-width", 2.6);
+  if (clipped) {
+    g.append("text").attr("x", cw - 6).attr("y", 12).attr("text-anchor", "end")
+      .attr("font-size", 11.5).attr("fill", "#e65100").text("spikes clipped at the top — h is tiny");
+  }
+  // rug
+  const rj = d3.randomLcg(11);
+  const rug = g.append("g").attr("transform", `translate(0,${ch - RUG + 6})`);
+  for (const r of rows()) {
+    rug.append("circle").attr("cx", xs(r[0])).attr("cy", 4 + rj() * (RUG - 14)).attr("r", 2.6)
+      .attr("fill", "#555").attr("opacity", 0.7);
+  }
+  g.append("line").attr("x1", 0).attr("x2", cw).attr("y1", ch - RUG).attr("y2", ch - RUG).attr("stroke", "#ccc");
+  // axes
+  g.append("g").attr("transform", `translate(0,${ch})`).call(d3.axisBottom(xs).ticks(8).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  g.append("g").call(d3.axisLeft(ys).ticks(5).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  addLabel("axl axl-x", cfg.axis[0], MAR.l + cw / 2, H - 14, cfg.math);
+  addLabel("axl axl-y", "\\(p(x)\\)", 4, MAR.t + (ch - RUG) / 2, true);
+}
+
+function render2D() {
+  const h = hVal();
+  const W = 560, H = 520; svg.attr("width", W).attr("height", H);
+  const cw = W - MAR.l - MAR.r, ch = H - MAR.t - MAR.b;
+  const g = svg.append("g").attr("transform", `translate(${MAR.l},${MAR.t})`);
+  const cfg = DATASETS[state.ds];
+  const dx = fixedLims().x;
+  const dy = fixedLims().y;
+  const xs = d3.scaleLinear().domain(dx).range([0, cw]);
+  const ys = d3.scaleLinear().domain(dy).range([ch, 0]);
+  // KDE grid + filled contours
+  const G = 76, vals = new Array(G * G);
+  let peak = 0;
+  for (let r = 0; r < G; r++) {
+    const vy = dy[0] + (dy[1] - dy[0]) * (r + 0.5) / G;
+    for (let c = 0; c < G; c++) {
+      const vx = dx[0] + (dx[1] - dx[0]) * (c + 0.5) / G;
+      const d = kde2([vx, vy], h);
+      vals[r * G + c] = d;
+      if (d > peak) peak = d;
+    }
+  }
+  const levels = [0.04, 0.11, 0.2, 0.32, 0.47, 0.63, 0.8, 0.93].map(t => t * peak);
+  const conts = d3.contours().size([G, G]).thresholds(levels)(vals);
+  g.append("g")
+    .attr("transform", `scale(${cw / G},${-ch / G}) translate(0,${-G})`)
+    .selectAll("path").data(conts).join("path")
+    .attr("d", d3.geoPath())
+    .attr("fill", (d, i) => d3.interpolateBlues(0.12 + 0.72 * i / (levels.length - 1)))
+    .attr("stroke", "none");
+  // truth contours (dashed)
+  if (cfg.truth2) {
+    const tvals = new Array(G * G);
+    let tpeak = 0;
+    for (let r = 0; r < G; r++) {
+      const vy = dy[0] + (dy[1] - dy[0]) * (r + 0.5) / G;
+      for (let c = 0; c < G; c++) {
+        const vx = dx[0] + (dx[1] - dx[0]) * (c + 0.5) / G;
+        const d = cfg.truth2([vx, vy]);
+        tvals[r * G + c] = d;
+        if (d > tpeak) tpeak = d;
+      }
+    }
+    const tconts = d3.contours().size([G, G]).thresholds([0.2, 0.6].map(t => t * tpeak))(tvals);
+    g.append("g")
+      .attr("transform", `scale(${cw / G},${-ch / G}) translate(0,${-G})`)
+      .selectAll("path").data(tconts).join("path")
+      .attr("d", d3.geoPath())
+      .attr("fill", "none").attr("stroke", "#616161").attr("stroke-width", 1.6 / (cw / G))
+      .attr("stroke-dasharray", `${5 / (cw / G)},${4 / (cw / G)}`);
+  }
+  // points
+  for (const r of rows()) {
+    g.append("circle").attr("cx", xs(r[0])).attr("cy", ys(r[1])).attr("r", 2.6)
+      .attr("fill", "#333").attr("opacity", 0.65).attr("stroke", "#fff").attr("stroke-width", 0.5);
+  }
+  // axes
+  g.append("g").attr("transform", `translate(0,${ch})`).call(d3.axisBottom(xs).ticks(7).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  g.append("g").call(d3.axisLeft(ys).ticks(7).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  addLabel("axl axl-x", cfg.axis[0], MAR.l + cw / 2, H - 14, cfg.math);
+  addLabel("axl axl-y", cfg.axis[1], 4, MAR.t + ch / 2, cfg.math);
+}
+
+// =====================================================================
+// CV chart, stats panel, gallery, captions
+// =====================================================================
+function renderCV() {
+  const W = 360, H = 220;
+  const svgC = d3.select("#kk-cv");
+  svgC.selectAll("*").remove();
+  svgC.attr("width", W).attr("height", H);
+  const mar = { l: 52, r: 12, t: 8, b: 32 };
+  const cw = W - mar.l - mar.r, ch = H - mar.t - mar.b;
+  const g = svgC.append("g").attr("transform", `translate(${mar.l},${mar.t})`);
+  const xs = d3.scaleLog().domain([cv[0].h, cv[cv.length - 1].h]).range([0, cw]);
+  const fin = cv.filter(c => c.ll > -Infinity);
+  const ydom = fin.length ? [d3.min(fin, c => c.ll), d3.max(fin, c => c.ll)] : [-1, 1];
+  const pad = (ydom[1] - ydom[0]) * 0.1 + 1e-9;
+  const ys = d3.scaleLinear().domain([ydom[0] - pad, ydom[1] + pad]).range([ch, 0]);
+  // current h marker
+  g.append("line").attr("x1", xs(hVal())).attr("x2", xs(hVal())).attr("y1", 0).attr("y2", ch)
+    .attr("stroke", CKDE).attr("stroke-width", 1.6).attr("stroke-dasharray", "4,3");
+  // curve through finite values
+  g.append("path")
+    .attr("d", d3.line().x(c => xs(c.h)).y(c => ys(c.ll))(fin))
+    .attr("fill", "none").attr("stroke", CCV).attr("stroke-width", 2);
+  g.selectAll("circle.f").data(fin).join("circle")
+    .attr("cx", c => xs(c.h)).attr("cy", c => ys(c.ll)).attr("r", 2.8)
+    .attr("fill", CCV).attr("stroke", "#fff").attr("stroke-width", 0.7);
+  // -infinity h's: x marks at the bottom
+  for (const c of cv) {
+    if (c.ll > -Infinity) continue;
+    g.append("text").attr("x", xs(c.h)).attr("y", ch - 2).attr("text-anchor", "middle")
+      .attr("font-size", 11).attr("fill", "#c62828").text("×");
+  }
+  const best = cvBest();
+  if (best) {
+    g.append("circle").attr("cx", xs(best.h)).attr("cy", ys(best.ll)).attr("r", 5)
+      .attr("fill", "none").attr("stroke", "#2e7d32").attr("stroke-width", 2.2);
+  }
+  g.append("g").attr("transform", `translate(0,${ch})`)
+    .call(d3.axisBottom(xs).ticks(5, "~g").tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  g.append("g").call(d3.axisLeft(ys).ticks(5).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  svgC.append("text").attr("x", mar.l + cw / 2).attr("y", H - 4)
+    .attr("text-anchor", "middle").attr("font-size", 12).attr("fill", "#333").text("h (log scale)");
+  document.getElementById("kk-cvbest").innerHTML = best
+    ? `best: h = ${best.h.toPrecision(3)}`
+    : "all h values gave −∞";
+    // document.getElementById("kk-cvbest").innerHTML = best
+    // ? `best: h = ${best.h.toPrecision(3)} &nbsp;(<span style="color:#c62828">×</span> = a held-out point was out of every kernel's reach → −∞)`
+    // : "all h values gave −∞";
+}
+
+function buildGallery() {
+  const wrap = document.getElementById("kk-gallery");
+  wrap.innerHTML = "";
+  for (const [key, k] of Object.entries(KERNELS)) {
+    const div = document.createElement("div");
+    div.className = "kk-kern" + (state.kern === key ? " sel" : "");
+    div.id = "kk-k-" + key;
+    const W = 104, H = 56;
+    const dom = [-1.5, 1.5], peak = 0.85;
+    const pts = d3.range(121).map(i => {
+      const u = dom[0] + (dom[1] - dom[0]) * i / 120;
+      return [4 + (W - 8) * (u - dom[0]) / (dom[1] - dom[0]), H - 6 - (H - 14) * k.K(u) / peak];
+    });
+    div.innerHTML = `<svg width="${W}" height="${H}">
+      <line x1="4" y1="${H - 6}" x2="${W - 4}" y2="${H - 6}" stroke="#ccc"/>
+      <path d="M${pts.map(p => p[0].toFixed(1) + "," + p[1].toFixed(1)).join("L")}" fill="none" stroke="#1976d2" stroke-width="2"/>
+      </svg>${k.label}<br><span class="s2lab">\\(\\sigma_K^2 = ${k.s2tex}\\)</span>`;
+    div.addEventListener("click", () => { state.kern = key; computeCV(); renderAll(); });
+    wrap.appendChild(div);
+  }
+  typeset([wrap]);
+}
+
+const CAPS = {
+  bimodal: "The dashed gray curve is the true density (a 2-component GMM).",
+  uniform: "The dashed gray curve is the true density (a uniform distribution).",
+  penguins: "Real bill measurements, no true density to compare against.",
+};
+
+function renderMeta() {
+  const best = cvBest();
+  document.getElementById("kk-hv").textContent = "h = " + hVal().toPrecision(3);
+  document.getElementById("kk-legend").innerHTML =
+    `<span class="ln" style="border-color:${CKDE}"></span>KDE p(x)` +
+    (state.dim === 1 && state.bumps ? `<span class="ln" style="border-color:${CBUMP}"></span>the n bumps (1/nh)K((x−x<sub>i</sub>)/h)` : "") +
+    (DATASETS[state.ds].truth1 ? `<span class="ln dash" style="border-color:${CTRUTH}"></span>true density` : "") +
+    `<span class="ln dash" style="border-color:${CKDE}"></span>current h on the CV curve` +
+    `<span class="ln" style="border-color:#2e7d32"></span><span style="margin-left:-10px">◯ CV best</span>`;
+  document.getElementById("kk-cap").innerHTML = CAPS[state.ds];
+  typeset([document.getElementById("kk-cap")]);
+}
+
+// =====================================================================
+// Wiring
+// =====================================================================
+function renderMain() {
+  clearStage();
+  if (state.dim === 1) render1D(); else render2D();
+}
+function renderAll() {
+  renderMain();
+  renderCV();
+  renderMeta();
+  for (const [key] of Object.entries(KERNELS)) {
+    document.getElementById("kk-k-" + key).classList.toggle("sel", state.kern === key);
+  }
+  document.body.dataset.kdim = state.dim;
+}
+
+let hTimer = null;
+function main() {
+  if (main.done) return;                     // jsdom fires load twice
+  main.done = true;
+  buildGallery();
+  computeCV();
+  for (const r of document.querySelectorAll('input[name="kk-dim"]')) {
+    r.addEventListener("change", () => { if (r.checked) { state.dim = +r.value; computeCV(); renderAll(); } });
+  }
+  const nSlider = document.getElementById("kk-n");
+  const syncN = () => {                      // clamp the slider to the dataset's pool
+    nSlider.max = poolSize();
+    if (state.n > poolSize()) { state.n = poolSize(); nSlider.value = state.n; }
+    document.getElementById("kk-nv").textContent = "n = " + n();
+  };
+  for (const r of document.querySelectorAll('input[name="kk-ds"]')) {
+    r.addEventListener("change", () => { if (r.checked) { state.ds = r.value; syncN(); computeCV(); renderAll(); } });
+  }
+  let nTimer = null;
+  nSlider.addEventListener("input", () => {
+    state.n = +nSlider.value;
+    document.getElementById("kk-nv").textContent = "n = " + n();
+    clearTimeout(nTimer);
+    nTimer = setTimeout(() => { computeCV(); renderAll(); }, 200);
+  });
+  syncN();
+  document.getElementById("kk-h").addEventListener("input", ev => {
+    state.hIdx = +ev.target.value;
+    document.getElementById("kk-hv").textContent = "h = " + hVal().toPrecision(3);
+    clearTimeout(hTimer);
+    hTimer = setTimeout(() => { renderMain(); renderCV(); renderMeta(); }, 60);
+  });
+  document.getElementById("kk-bumps").addEventListener("change", ev => {
+    state.bumps = ev.target.checked; renderMain(); renderMeta();
+  });
+  document.getElementById("kk-snap").addEventListener("click", () => {
+    const best = cvBest();
+    if (!best) return;
+    const rel = best.h / hScale();
+    state.hIdx = Math.round(100 * Math.log(rel / HREL[0]) / Math.log(HREL[1] / HREL[0]));
+    state.hIdx = Math.max(0, Math.min(100, state.hIdx));
+    document.getElementById("kk-h").value = state.hIdx;
+    renderAll();
+  });
+  renderAll();
+
+  window.__kkApi = {
+    setKern: k => { state.kern = k; computeCV(); renderAll(); },
+    setDim: d => { state.dim = d; document.querySelector(`input[name="kk-dim"][value="${d}"]`).checked = true; computeCV(); renderAll(); },
+    setDs: d => { state.ds = d; document.querySelector(`input[name="kk-ds"][value="${d}"]`).checked = true; syncN(); computeCV(); renderAll(); },
+    setH: idx => { state.hIdx = idx; document.getElementById("kk-h").value = idx; renderAll(); },
+    setN: v => { state.n = v; document.getElementById("kk-n").value = v; document.getElementById("kk-nv").textContent = "n = " + n(); computeCV(); renderAll(); },
+    kde1, kde2, hVal, cvBest, computeCV, KERNELS, state, rows, n, dataSd,
+    getCV: () => cv,
+  };
+}
+window.addEventListener("load", main);
+</script>
+
+<!--
+  HOW IT WORKS (matches the course notes)
+  - p(x) = (1/nh) sum_i K((x - x_i)/h); in 2D the product kernel
+    K(u1)K(u2) with 1/h^2. Kernel conditions: K >= 0, integral 1, even.
+  - Kernels (support [-1,1] except Gaussian): boxcar 1/2, triangular
+    1-|u|, cosine (pi/4)cos(pi u/2), Gaussian. sigma_K^2 = integral of
+    u^2 K(u): 1/3, 1/6, 1 - 8/pi^2, 1.
+  - Bandwidth: (1/h)K(x/h) integrates to 1 for every h; spike as h -> 0,
+    slab as h -> infinity. h slider is log-scaled in units of the data sd
+    so the same slider works for all datasets.
+  - h is chosen by 5-FOLD CV (seeded fold assignment): average held-out
+    log-likelihood per point over a log grid of h. For compact-support
+    kernels a held-out point can be beyond h of every training point ->
+    likelihood 0 -> -infinity (drawn as red x marks): the CV analogue of
+    the notes' "can't use training MLE, sigma -> 0 spikes" argument, and
+    a practical reason the Gaussian kernel is the safe default.
+  - Stats panel: the slide-2 identities E[p] = xbar and
+    Var(p) = Var(x) + h^2 sigma_K^2 (per coordinate; Var(x) with 1/n as
+    in the notes), verified by numerically integrating the KDE's
+    marginal - for product kernels the marginal along coordinate j is
+    exactly the 1D KDE on that coordinate's values.
+
+  SOURCES (kept in source; not displayed in the applet UI)
+  - Course notes (3 slides): GMM-with-M=n motivation, kernel conditions
+    and the three compact kernels, bandwidth rescaling argument, CV for
+    h, and the mean/variance derivation.
+  - Data: Palmer penguins (Horst, Hill & Gorman 2020, CC-0), same rows
+    as the other applets; synthetic samples are seeded constructions.
+-->
+</body>
+</html>
