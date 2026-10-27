@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Why the GMM Likelihood Has No Maximum</title>
+  <link rel="stylesheet" href="../styling/global.css">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; color: #222; }
+    h1 { font-size: 24px; }
+    .ub-intro, .ub-eq, .ub-foot { max-width: 1080px; }
+    .ub-intro { font-size: 15px; margin: 6px 0; }
+    .ub-eq { font-size: 18px; margin: 6px 0 14px 0; }
+    .ub-panels { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+    .ub-panel { border: 1px solid #ccc; border-radius: 6px; padding: 8px 14px 12px 14px; flex: 0 0 auto; width: 500px; margin: 0; }
+    .ub-panel legend { font-weight: bold; font-size: 14.5px; padding: 0 6px; }
+    .ub-model { font-size: 15.5px; margin: 0 0 4px 0; min-height: 1.6em; }
+    .ub-ll { font-size: 22px; margin: 2px 0 0 0; min-height: 1.6em; font-variant-numeric: tabular-nums; }
+    .ub-fact { font-size: 13.5px; color: #444; min-height: 1.5em; margin: 0 0 6px 0; }
+    .ub-ttl { font-size: 13px; color: #444; margin: 4px 0 2px 0; min-height: 1.4em; }
+    .ub-stage { position: relative; display: inline-block; }
+    .ub-stage svg { display: block; }
+    .axl { position: absolute; font-size: 12.5px; color: #333; pointer-events: none; white-space: nowrap; }
+    .axl-c { transform: translate(-50%, 0); }
+    .ticktext { font-size: 10px; fill: #555; }
+    .ub-ctl { display: flex; gap: 10px; align-items: flex-start; margin-top: 4px; }
+    .ub-sliders { flex: 0 0 auto; width: 224px; }
+    .ub-srow { display: flex; align-items: center; gap: 6px; margin: 3px 0; font-size: 14px; height: 24px; }
+    .ub-srow .lab { width: 24px; text-align: right; }
+    .ub-srow input[type="range"] { width: 128px; margin: 0; }
+    .ub-srow .val { width: 58px; font-variant-numeric: tabular-nums; font-size: 13px; }
+    .ub-srow .twin { width: 128px; text-align: right; font-size: 13px; color: #555; }
+    .ub-chip { font-size: 12px; color: #444; height: 1.3em; line-height: 1.3em; margin: -1px 0 2px 30px; white-space: nowrap; overflow: hidden; }
+    .ub-chip.on { color: #D55E00; }
+    .ub-prof { position: relative; flex: 0 0 auto; }
+    .ub-prof svg { display: block; }
+    .ub-btns { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+    button { font-size: 13.5px; padding: 4px 9px; border-radius: 5px; border: 1px solid #999; background: #f5f5f5; cursor: pointer; }
+    button:hover { background: #eee; }
+    .ub-foot { background: #f5f5f5; border-radius: 6px; padding: 10px 14px; font-size: 14px; margin-top: 20px; line-height: 1.7; }
+    .ub-foot .row { margin: 4px 0; }
+    .pt { cursor: pointer; }
+    .pt:hover { stroke: #000; stroke-width: 2px; }
+  </style>
+
+  <script src="https://d3js.org/d3.v7.js"></script>
+  <script>window.MathJax = {
+    tex: { inlineMath: [['\\(', '\\)'], ['$', '$']], packages: { '[+]': ['color'] } },
+    chtml: { matchFontHeight: false, scale: 1.1 }
+  };</script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js"></script>
+</head>
+
+<body>
+  <h1>Why the GMM Likelihood Has No Maximum</h1>
+  
+
+  <div class="ub-panels">
+    <fieldset class="ub-panel" id="pn-one">
+      <legend>One Gaussian</legend>
+      <div class="ub-model" id="model-one"></div>
+      <div class="ub-ll" id="ll-one"></div>
+      <div class="ub-fact">has a maximum: at \(\mu=\bar x,\ \sigma=s\) and nowhere else</div>
+      <div class="ub-ttl">density \(p(x)\) with its value at each point; click a point to put \(\mu\) exactly on it</div>
+      <div class="ub-stage" id="stage-one"></div>
+      <div class="ub-ctl">
+        <div class="ub-sliders" id="sl-one"></div>
+        <div class="ub-prof" id="prof-one"></div>
+      </div>
+      <div class="ub-btns">
+        <button id="btn-one-mle">MLE: \(\mu=\bar x,\ \sigma=s\)</button>
+        <button id="btn-one-shrink" title="puts mu on the nearest data point, then shrinks sigma">Collapse: \(\mu \to x_k,\ \sigma \to 0\)</button>
+      </div>
+    </fieldset>
+
+    <fieldset class="ub-panel" id="pn-mix">
+      <legend>Mixture of two Gaussians</legend>
+      <div class="ub-model" id="model-mix"></div>
+      <div class="ub-ll" id="ll-mix"></div>
+      <div class="ub-fact">has no maximum: with \(\mu_2\) on a data point, \(\sigma_2\to 0\) sends \(L\to\infty\)</div>
+      <div class="ub-ttl">density \(p(x)\) with its value at each point; click a point to put \(\mu_2\) exactly on it</div>
+      <div class="ub-stage" id="stage-mix"></div>
+      <div class="ub-ctl">
+        <div class="ub-sliders" id="sl-mix"></div>
+        <div class="ub-prof" id="prof-mix"></div>
+      </div>
+      <div class="ub-btns">
+        <button id="btn-mix-same">Same as one Gaussian</button>
+        <button id="btn-mix-em">Two-bump fit (EM)</button>
+        <button id="btn-mix-shrink" title="puts mu2 on the nearest data point, fits component 1 to the other points, then shrinks sigma2">Collapse: \(\mu_2 \to x_k,\ \sigma_2 \to 0\)</button>
+      </div>
+    </fieldset>
+  </div>
+
+  <!-- <div class="ub-foot">
+    <div class="row"><b>One Gaussian</b> with \(\mu\) on a data point \(x_k\):
+      \( L = (2\pi\sigma^2)^{-n/2}\exp\!\Big(-\sum_{i\neq k}\dfrac{(x_i-x_k)^2}{2\sigma^2}\Big) \;\to\; 0 \) as \(\sigma\to 0\);
+      the exponential wins, so \(L\) peaks at \(\hat\mu=\bar x,\ \hat\sigma^2=\frac1n\sum_i (x_i-\bar x)^2\).</div>
+    <div class="row"><b>Mixture</b> with \(\mu_2\) on \(x_k\): every factor is a sum of two positive parts, hence at least either part, so
+      \( L \;\ge\; \dfrac{\pi_2}{\sigma_2\sqrt{2\pi}} \prod_{i\neq k}\pi_1\,N(x_i;\mu_1,\sigma_1^2) \;\to\; +\infty \) as \(\sigma_2\to 0\);
+      the product does not involve \(\sigma_2\) at all.</div>
+    <div class="row">So a GMM has no MLE; EM converges to a local maximum and can collapse a component onto one point. Remedies: a floor on \(\sigma_m\), a prior on \(\sigma_m\), restarts.</div>
+  </div> -->
+
+<script>
+// ---- DATA (swap here) ----
+// Eight points in two clusters (four near -1.5, four near +1.5), fixed at one decimal so the
+// labels and the terms read cleanly. Everything else on the page is derived from X.
+const X = [-2.3, -1.7, -1.2, -0.6, 0.8, 1.3, 1.9, 2.6];
+// ---- END DATA ----
+
+const n = X.length;
+const xbar = d3.mean(X);
+const s = Math.sqrt(d3.mean(X, x => (x - xbar) ** 2));        // MLE sd (divide by n)
+const SDMIN = 1e-6, SDMAX = 5;                                 // range of every sigma slider (log scale)
+const PAD = 0.6;
+const XLO = Math.floor((d3.min(X) - PAD) * 10) / 10, XHI = Math.ceil((d3.max(X) + PAD) * 10) / 10;
+
+const BLU = '#0072B2', VER = '#D55E00', PUR = '#7B3F9E', GRY = '#9a9a9a', INK = '#333';
+const rgb = hex => { const c = d3.color(hex); return `${c.r},${c.g},${c.b}`; };
+
+// ---- likelihood ---------------------------------------------------------------------------
+const LOG2PI = Math.log(2 * Math.PI);
+const logN = (x, m, sd) => -Math.log(sd) - 0.5 * LOG2PI - 0.5 * ((x - m) / sd) ** 2;
+const lse = (a, b) => { const m = Math.max(a, b); return m + Math.log(Math.exp(a - m) + Math.exp(b - m)); };
+const sum = a => a.reduce((u, v) => u + v, 0);
+const termsOne = p => X.map(x => logN(x, p.mu, p.sd));
+const termsMix = p => { const la = Math.log(p.pi), lb = Math.log(1 - p.pi);
+  return X.map(x => lse(la + logN(x, p.mu1, p.sd1), lb + logN(x, p.mu2, p.sd2))); };
+const llOne = p => sum(termsOne(p)), llMix = p => sum(termsMix(p));
+const LLHAT = llOne({ mu: xbar, sd: s });                        // the single Gaussian's maximum
+
+function emStep(p) {
+  const la = Math.log(p.pi), lb = Math.log(1 - p.pi);
+  const g = X.map(x => { const a = la + logN(x, p.mu1, p.sd1), b = lb + logN(x, p.mu2, p.sd2); return Math.exp(a - lse(a, b)); });
+  const N1 = sum(g), N2 = n - N1;
+  const mu1 = sum(X.map((x, i) => g[i] * x)) / N1, mu2 = sum(X.map((x, i) => (1 - g[i]) * x)) / N2;
+  const sd1 = Math.sqrt(sum(X.map((x, i) => g[i] * (x - mu1) ** 2)) / N1);
+  const sd2 = Math.sqrt(sum(X.map((x, i) => (1 - g[i]) * (x - mu2) ** 2)) / N2);
+  return { pi: N1 / n, mu1, sd1, mu2, sd2 };
+}
+function emFit() {                                              // the sensible two-bump local maximum
+  let p = { pi: 0.5, mu1: d3.quantile(X, 0.25), sd1: s / 2, mu2: d3.quantile(X, 0.75), sd2: s / 2 };
+  for (let it = 0; it < 500; it++) p = emStep(p);
+  return p;
+}
+const EMFIT = emFit();
+
+// ---- state ---------------------------------------------------------------------------------
+const START = { one: { mu: xbar, sd: s }, mix: { pi: 0.5, mu1: xbar, sd1: s, mu2: xbar, sd2: s } };
+const S = { one: { ...START.one }, mix: { ...START.mix } };
+const tOf = sd => 1000 * Math.log(sd / SDMIN) / Math.log(SDMAX / SDMIN);   // sigma -> slider position
+const sdOf = t => SDMIN * Math.pow(SDMAX / SDMIN, t / 1000);               // slider position -> sigma
+const SPEC = {
+  one: [{ key: 'mu', tex: '\\mu', type: 'lin', min: XLO, max: XHI, step: 0.01, color: BLU, chip: true },
+        { key: 'sd', tex: '\\sigma', type: 'log', color: BLU }],
+  mix: [{ key: 'pi', tex: '\\pi_1', type: 'lin', min: 0.01, max: 0.99, step: 0.01, color: INK, twin: '\\pi_2' },
+        { key: 'mu1', tex: '\\mu_1', type: 'lin', min: XLO, max: XHI, step: 0.01, color: BLU },
+        { key: 'sd1', tex: '\\sigma_1', type: 'log', color: BLU },
+        { key: 'mu2', tex: '\\mu_2', type: 'lin', min: XLO, max: XHI, step: 0.01, color: VER, chip: true },
+        { key: 'sd2', tex: '\\sigma_2', type: 'log', color: VER }],
+};
+const CHIPKEY = { one: 'mu', mix: 'mu2' };
+const capIdx = (kind, key) => X.indexOf(S[kind][key]);         // index of the data point a mean sits on exactly, else -1
+
+// ---- MathJax helpers ---------------------------------------------------------------------
+function mjRun(els) {
+  const go = () => {
+    const live = (els || []).filter(e => e && e.isConnected);
+    if (!live.length || !window.MathJax || !MathJax.typesetPromise) return null;
+    if (MathJax.typesetClear) MathJax.typesetClear();
+    return MathJax.typesetPromise(live).catch(() => {});
+  };
+  window.__mjChain = (window.__mjChain || Promise.resolve()).then(() => {
+    if (window.MathJax && MathJax.typesetPromise) return go();
+    return new Promise(r => setTimeout(r, 150)).then(go);
+  });
+  return window.__mjChain;
+}
+// double-buffered live equation: the TeX is written into the hidden child and swapped in once typeset
+function MathSlot(el) {
+  this.a = document.createElement('span'); this.b = document.createElement('span');
+  this.b.style.display = 'none'; el.append(this.a, this.b);
+  this.showA = true; this.cur = null; this.pending = null; this.timer = null;
+}
+MathSlot.prototype.set = function (tex) {
+  if (tex === this.cur) return;
+  this.pending = tex;
+  if (this.timer) return;
+  this.timer = setTimeout(() => { this.timer = null; this.flush(); }, 60);
+};
+MathSlot.prototype.flush = function () {
+  const tex = this.pending; this.pending = null;
+  if (tex == null || tex === this.cur) return;
+  this.cur = tex;
+  const hidden = this.showA ? this.b : this.a, vis = this.showA ? this.a : this.b;
+  hidden.innerHTML = tex; this.showA = !this.showA;
+  mjRun([hidden]).then(() => { hidden.style.display = ''; vis.style.display = 'none'; });
+};
+
+// ---- number formatting --------------------------------------------------------------------
+const MINUS = '−';
+const SUP = { '-': '⁻', '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹' };
+const sup = str => String(str).split('').map(c => SUP[c] || c).join('');
+const LN10 = Math.LN10;
+const fmtLTeX = ll => {                                         // the likelihood L = e^ll, computed from its log (ASCII minus for TeX)
+  const l10 = ll / LN10;
+  if (Math.abs(l10) < 100) { const e = Math.floor(l10), m = 10 ** (l10 - e); return `${m.toFixed(2)}\\times 10^{${e}}`; }
+  if (Math.abs(l10) < 1e4) return `10^{${Math.round(l10)}}`;
+  const a = Math.abs(l10), e = Math.floor(Math.log10(a)), m = a / 10 ** e;    // exponent itself needs scientific notation
+  return `10^{${l10 < 0 ? '-' : ''}${m.toFixed(1)}\\times 10^{${e}}}`;
+};
+const fmtFactor = lp => {                                       // short labels for the factors band (<= 5 characters), from log p
+  const l10 = lp / LN10;
+  if (l10 < -99) return '\u22480';
+  if (l10 >= -2 && l10 < 2) { const v = Math.exp(lp); return v < 10 ? v.toFixed(2) : v.toFixed(1); }
+  let e = Math.floor(l10), m = Math.round(10 ** (l10 - e));
+  if (m === 10) { m = 1; e += 1; }
+  return `${m}e${e < 0 ? MINUS : ''}${Math.abs(e)}`;
+};
+const fmtSd = v => d3.format('.3~g')(v).replace('-', MINUS);
+const fmtMu = v => v.toFixed(2).replace('-', MINUS);
+
+// ---- geometry -----------------------------------------------------------------------------
+const W = 500, ML = 36, MR = 10, PW = W - ML - MR;
+const D = { top: 16, h: 130 }, DBASE = D.top + D.h;            // density plot rect, baseline at DBASE
+const LAB = { y: DBASE + 4 };                                   // band: the data values under the points
+const BT = { y: DBASE + 24 };                                   // band: title of the bars plot
+const B = { top: DBASE + 46, h: 110 };                          // bars plot rect
+const TERM = { y: B.top + B.h + 3 };                            // band: the terms, one number per bar
+const H = TERM.y + 20;
+const DMAX = Math.ceil(10 * 3.3 / (s * Math.sqrt(2 * Math.PI))) / 10;      // density axis top, from the data spread
+const BMIN = -8, BMAX = Math.ceil(-Math.log(SDMIN) - 0.5 * LOG2PI + Math.log(0.5)) + 1;   // factors axis, in log p (log axis: baseline at p = 1)
+const x = d3.scaleLinear().domain([XLO, XHI]).range([ML, ML + PW]);
+const yD = d3.scaleLinear().domain([0, DMAX]).range([DBASE, D.top]);
+const yB = d3.scaleLinear().domain([BMIN, BMAX]).range([B.top + B.h, B.top]);
+
+const PFW = 236, PFH = 320, PM = { l: 42, r: 10, t: 22, b: 36 };
+const LLLO = LLHAT - 20, LLHI = LLHAT + 21;                    // same profile range in both panels (top ~ L = 10^2, so a collapse stays on the chart longer)
+const xp = d3.scaleLog().domain([SDMIN, SDMAX]).range([PM.l, PFW - PM.r]);
+const yp = d3.scaleLinear().domain([LLLO, LLHI]).range([PFH - PM.b, PM.t]);
+
+// clip a polyline (data units) to lo <= y <= hi, cutting it exactly at the crossings;
+// returns the pieces plus the boundary points where the curve leaves the band
+function clipBand(pts, lo, hi) {
+  const pieces = [], exits = []; let cur = [];
+  const inside = y => y >= lo && y <= hi;
+  const cross = (p, q, b) => { const t = (b - p[1]) / (q[1] - p[1]); return [p[0] + t * (q[0] - p[0]), b]; };
+  for (let i = 0; i < pts.length; i++) {
+    const q = pts[i], p = i ? pts[i - 1] : null;
+    if (inside(q[1])) {
+      if (p && !inside(p[1])) cur.push(cross(p, q, p[1] > hi ? hi : lo));
+      cur.push(q);
+    } else if (p && inside(p[1])) {
+      const c = cross(p, q, q[1] > hi ? hi : lo);
+      cur.push(c); exits.push({ pt: c, up: q[1] > hi });
+      pieces.push(cur); cur = [];
+    }
+  }
+  if (cur.length) pieces.push(cur);
+  return { pieces, exits };
+}
+const line = d3.line();
+const tri = (cx, cy, up, w = 4.5, h = 9) => up
+  ? `M${cx - w},${cy + h} L${cx + w},${cy + h} L${cx},${cy} Z`
+  : `M${cx - w},${cy - h} L${cx + w},${cy - h} L${cx},${cy} Z`;
+
+function curvePts(fn, means, sds) {
+  const xs = d3.range(361).map(i => XLO + (XHI - XLO) * i / 360);
+  means.forEach((m, j) => { for (const k of [-4, -3, -2, -1.5, -1, -0.5, -0.25, 0, 0.25, 0.5, 1, 1.5, 2, 3, 4]) xs.push(m + k * sds[j]); });
+  return xs.filter(v => v >= XLO && v <= XHI).sort(d3.ascending).map(v => [v, fn(v)]);
+}
+
+// ---- panels -------------------------------------------------------------------------------
+const UI = { one: {}, mix: {} };
+const anim = { one: null, mix: null };                         // one running shrink per panel
+
+function addLabel(host, cls, tex, left, top) {
+  const sp = document.createElement('span');
+  sp.className = cls; sp.style.left = left + 'px'; sp.style.top = top + 'px'; sp.innerHTML = tex;
+  host.appendChild(sp); mjRun([sp]); return sp;
+}
+
+function buildStage(kind) {
+  const host = document.getElementById('stage-' + kind);
+  const svg = d3.select(host).append('svg').attr('width', W).attr('height', H);
+  // density axes
+  svg.append('g').attr('class', 'axis').attr('transform', `translate(${ML},0)`)
+    .call(d3.axisLeft(yD).ticks(4).tickSize(3)).selectAll('text').attr('class', 'ticktext').attr('font-size', 10);
+  svg.append('line').attr('x1', ML).attr('x2', ML + PW).attr('y1', DBASE).attr('y2', DBASE).attr('stroke', '#333');
+  // bars axes
+  svg.append('g').attr('class', 'axis').attr('transform', `translate(${ML},0)`)
+    .call(d3.axisLeft(yB).tickValues(d3.range(-2, 7, 2).map(k => k * LN10)).tickFormat(v => { const k = Math.round(v / LN10); return k === 0 ? '1' : '10' + sup(k); }).tickSize(3)).selectAll('text').attr('class', 'ticktext').attr('font-size', 10);
+  svg.append('line').attr('x1', ML).attr('x2', ML + PW).attr('y1', yB(0)).attr('y2', yB(0)).attr('stroke', '#333');
+  // the data values under the points (they never move)
+  svg.append('g').selectAll('text').data(X).join('text').attr('class', 'ticktext').attr('font-size', 10)
+    .attr('x', d => x(d)).attr('y', LAB.y + 11).attr('text-anchor', 'middle').text(d => d.toFixed(1).replace('-', MINUS));
+  const g = {
+    curves: svg.append('g'), means: svg.append('g'), stems: svg.append('g'), bars: svg.append('g'),
+    terms: svg.append('g'), pts: svg.append('g'),
+  };
+  // data points on the baseline, clickable
+  const mkey = CHIPKEY[kind];
+  g.pts.selectAll('circle').data(d3.range(n)).join('circle').attr('class', 'pt')
+    .attr('cx', i => x(X[i])).attr('cy', DBASE).attr('r', 5.5).attr('fill', '#444').attr('stroke', '#fff').attr('stroke-width', 1.5)
+    .on('click', (ev, i) => { stopAnim(kind); S[kind][mkey] = X[i]; syncSliders(kind); render(); })
+    .append('title').text(i => `click: put ${kind === 'one' ? 'μ' : 'μ₂'} exactly here (${X[i].toFixed(1)})`);
+  UI[kind].stage = g;
+  addLabel(host, 'axl', `the \\(${n}\\) factors \\(p(x_i)\\), one per point (log axis)`, ML + 4, BT.y);
+}
+
+function renderStage(kind) {
+  const g = UI[kind].stage, p = S[kind];
+  let total, parts = [], terms, meanSpecs;
+  if (kind === 'one') {
+    total = v => Math.exp(logN(v, p.mu, p.sd));
+    terms = termsOne(p);
+    meanSpecs = [{ m: p.mu, sd: p.sd, color: BLU }];
+  } else {
+    const c1 = v => p.pi * Math.exp(logN(v, p.mu1, p.sd1)), c2 = v => (1 - p.pi) * Math.exp(logN(v, p.mu2, p.sd2));
+    total = v => c1(v) + c2(v);
+    parts = [{ fn: c1, color: BLU }, { fn: c2, color: VER }];
+    terms = termsMix(p);
+    meanSpecs = [{ m: p.mu1, sd: p.sd1, color: BLU }, { m: p.mu2, sd: p.sd2, color: VER }];
+  }
+  const means = meanSpecs.map(d => d.m), sds = meanSpecs.map(d => d.sd);
+  // which point a mean sits on exactly (the second mean wins when both do)
+  const capColor = new Array(n).fill(null);
+  meanSpecs.forEach(d => { const k = X.indexOf(d.m); if (k >= 0) capColor[k] = d.color; });
+
+  // curves (components dashed underneath, the density on top), clipped at the top of the plot
+  g.curves.selectAll('*').remove();
+  const draw = (pts, color, dash, width) => {
+    const { pieces, exits } = clipBand(pts, -Infinity, DMAX);
+    for (const pc of pieces) g.curves.append('path').attr('d', line(pc.map(q => [x(q[0]), yD(q[1])])))
+      .attr('fill', 'none').attr('stroke', color).attr('stroke-width', width).attr('stroke-dasharray', dash || null).attr('opacity', dash ? 0.85 : 1);
+    return exits;
+  };
+  parts.forEach(pt => draw(curvePts(pt.fn, means, sds), pt.color, '5 4', 1.3));
+  draw(curvePts(total, means, sds), kind === 'one' ? BLU : PUR, null, 2.2);
+
+  // mean markers
+  g.means.selectAll('*').remove();
+  meanSpecs.forEach(d => g.means.append('line').attr('x1', x(d.m)).attr('x2', x(d.m)).attr('y1', DBASE).attr('y2', D.top)
+    .attr('stroke', d.color).attr('stroke-width', 1.2).attr('stroke-dasharray', '4 3').attr('opacity', 0.8));
+
+  // stems: the likelihood factor p(x_i) at each point
+  g.stems.selectAll('*').remove();
+  X.forEach((xi, i) => {
+    const v = total(xi), col = capColor[i] || '#777', px = x(xi);
+    const clipped = v > DMAX;
+    g.stems.append('line').attr('x1', px).attr('x2', px).attr('y1', DBASE).attr('y2', yD(Math.min(v, DMAX)))
+      .attr('stroke', col).attr('stroke-width', capColor[i] ? 2.5 : 1.5);
+    if (clipped) g.stems.append('path').attr('d', tri(px, D.top, true)).attr('fill', col);
+    else g.stems.append('circle').attr('cx', px).attr('cy', yD(v)).attr('r', 3).attr('fill', col);
+  });
+  g.pts.selectAll('circle').attr('fill', i => capColor[i] || '#444');
+
+  // bars: the terms log p(x_i)
+  g.bars.selectAll('*').remove();
+  g.terms.selectAll('*').remove();
+  X.forEach((xi, i) => {
+    const v = terms[i], col = capColor[i] || GRY, px = x(xi), vc = Math.max(BMIN, Math.min(BMAX, v));
+    g.bars.append('rect').attr('x', px - 6).attr('width', 12).attr('y', Math.min(yB(0), yB(vc))).attr('height', Math.abs(yB(vc) - yB(0))).attr('fill', col);
+    if (v < BMIN) g.bars.append('path').attr('d', tri(px, B.top + B.h, false)).attr('fill', col);
+    if (v > BMAX) g.bars.append('path').attr('d', tri(px, B.top, true)).attr('fill', col);
+    g.terms.append('text').attr('class', 'ticktext').attr('font-size', 10).attr('x', px).attr('y', TERM.y + 12).attr('text-anchor', 'middle')
+      .attr('fill', capColor[i] ? col : '#333').attr('font-weight', capColor[i] ? 'bold' : null).text(fmtFactor(v));
+  });
+  UI[kind].terms = terms;
+  return terms;
+}
+
+function buildProfile(kind) {
+  const host = document.getElementById('prof-' + kind);
+  const svg = d3.select(host).append('svg').attr('width', PFW).attr('height', PFH);
+  const fmtX = v => v >= 1 ? d3.format('~g')(v) : '10' + sup(Math.round(Math.log10(v)));
+  svg.append('g').attr('class', 'axis').attr('transform', `translate(0,${PFH - PM.b})`)
+    .call(d3.axisBottom(xp).tickValues([1e-6, 1e-4, 1e-2, 1]).tickFormat(fmtX).tickSize(3)).selectAll('text').attr('class', 'ticktext').attr('font-size', 10);
+  const ks = d3.range(Math.ceil(LLLO / LN10), Math.floor(LLHI / LN10) + 1).filter(k => k % 5 === 0);
+  svg.append('g').attr('class', 'axis').attr('transform', `translate(${PM.l},0)`)
+    .call(d3.axisLeft(yp).tickValues(ks.map(k => k * LN10)).tickFormat(v => { const k = Math.round(v / LN10); return k === 0 ? '1' : '10' + sup(k); }).tickSize(3)).selectAll('text').attr('class', 'ticktext').attr('font-size', 10);
+  // reference: the single Gaussian's maximum (fixed), with its legend in the top band
+  svg.append('line').attr('x1', PM.l).attr('x2', PFW - PM.r).attr('y1', yp(LLHAT)).attr('y2', yp(LLHAT))
+    .attr('stroke', '#555').attr('stroke-dasharray', '5 4').attr('stroke-width', 1.2);
+  svg.append('line').attr('x1', PM.l).attr('x2', PM.l + 18).attr('y1', 10).attr('y2', 10).attr('stroke', '#555').attr('stroke-dasharray', '5 4').attr('stroke-width', 1.2);
+  svg.append('text').attr('class', 'ticktext').attr('font-size', 10).attr('x', PM.l + 22).attr('y', 13.5).attr('text-anchor', 'start')
+    .text(kind === 'one' ? 'the maximum' : 'the maximum of one Gaussian');
+  const g = { curve: svg.append('g'), dot: svg.append('g') };
+  UI[kind].prof = g;
+  addLabel(host, 'axl', '\\(L\\)', 4, 2);
+  addLabel(host, 'axl axl-c', kind === 'one' ? '\\(\\sigma\\)' : '\\(\\sigma_2\\)', (PM.l + PFW - PM.r) / 2, PFH - 18);
+}
+
+function profileLL(kind, sd) {                                  // ell as a function of the shrinking sigma, everything else fixed
+  return kind === 'one' ? llOne({ mu: S.one.mu, sd }) : llMix({ ...S.mix, sd2: sd });
+}
+function renderProfile(kind) {
+  const g = UI[kind].prof, sdKey = kind === 'one' ? 'sd' : 'sd2';
+  const N = 260, grid = d3.range(N + 1).map(i => SDMIN * Math.pow(SDMAX / SDMIN, i / N));
+  const pts = grid.map(sd => [sd, profileLL(kind, sd)]);
+  const { pieces, exits } = clipBand(pts, LLLO, LLHI);
+  g.curve.selectAll('*').remove();
+  const col = kind === 'one' ? BLU : PUR;
+  for (const pc of pieces) g.curve.append('path').attr('d', line(pc.map(q => [xp(q[0]), yp(q[1])])))
+    .attr('fill', 'none').attr('stroke', col).attr('stroke-width', 2.2);
+  for (const e of exits) g.curve.append('path').attr('d', tri(xp(e.pt[0]), yp(e.pt[1]), e.up, 4, 8)).attr('fill', col);
+  // the current setting: a dot on the curve, or an arrow at the edge it left through
+  const sd = S[kind][sdKey], ll = profileLL(kind, sd), off = ll < LLLO || ll > LLHI;
+  g.dot.selectAll('*').remove();
+  if (off) g.dot.append('path').attr('d', tri(xp(sd), yp(ll > LLHI ? LLHI : LLLO), ll > LLHI, 6, 12)).attr('fill', col);
+  else g.dot.append('circle').attr('cx', xp(sd)).attr('cy', yp(ll)).attr('r', 5).attr('fill', col).attr('stroke', '#fff').attr('stroke-width', 1.5);
+  UI[kind].profile = { grid, pts, ll, off };
+}
+
+function buildSliders(kind) {
+  const host = document.getElementById('sl-' + kind);
+  UI[kind].sl = {};
+  for (const sp of SPEC[kind]) {
+    const row = document.createElement('div'); row.className = 'ub-srow';
+    const lab = document.createElement('span'); lab.className = 'lab'; lab.style.color = sp.color; lab.innerHTML = `\\(${sp.tex}\\)`;
+    const inp = document.createElement('input'); inp.type = 'range'; inp.id = `sl-${kind}-${sp.key}`;
+    if (sp.type === 'lin') { inp.min = sp.min; inp.max = sp.max; inp.step = sp.step; }
+    else { inp.min = 0; inp.max = 1000; inp.step = 'any'; }
+    const val = document.createElement('span'); val.className = 'val';
+    row.append(lab, inp, val); host.appendChild(row);
+    if (sp.twin) {                                               // pi_2 = 1 - pi_1, shown but not a slider
+      const r2 = document.createElement('div'); r2.className = 'ub-srow';
+      const l2 = document.createElement('span'); l2.className = 'lab'; l2.style.color = sp.color; l2.innerHTML = `\\(${sp.twin}\\)`;
+      const sp2 = document.createElement('span'); sp2.className = 'twin'; sp2.innerHTML = '\\(= 1 - \\pi_1 =\\)';
+      const v2 = document.createElement('span'); v2.className = 'val'; v2.id = `twin-${kind}-${sp.key}`;
+      r2.append(l2, sp2, v2); host.appendChild(r2); UI[kind].twin = v2;
+    }
+    if (sp.chip) { const chip = document.createElement('div'); chip.className = 'ub-chip'; chip.id = `chip-${kind}`; host.appendChild(chip); UI[kind].chip = chip; }
+    inp.addEventListener('input', () => {
+      stopAnim(kind);
+      S[kind][sp.key] = sp.type === 'lin' ? +inp.value : sdOf(+inp.value);
+      render();
+    });
+    UI[kind].sl[sp.key] = { inp, val, sp };
+  }
+  mjRun([...host.querySelectorAll('.lab, .twin')]);
+}
+function syncSliders(kind) {
+  for (const sp of SPEC[kind]) {
+    const { inp } = UI[kind].sl[sp.key], v = S[kind][sp.key];
+    inp.value = sp.type === 'lin' ? v : tOf(v);
+  }
+}
+function renderSliders(kind) {
+  for (const sp of SPEC[kind]) {
+    const { val } = UI[kind].sl[sp.key], v = S[kind][sp.key];
+    val.textContent = sp.type === 'log' ? fmtSd(v) : (sp.key === 'pi' ? v.toFixed(2) : fmtMu(v));
+    if (sp.twin) UI[kind].twin.textContent = (1 - v).toFixed(2);
+  }
+  const k = capIdx(kind, CHIPKEY[kind]), chip = UI[kind].chip;
+  chip.textContent = k >= 0 ? 'exactly on a data point' : (kind === 'one' ? '' : 'not on a data point; click one');
+  chip.classList.toggle('on', kind === 'mix' && k >= 0);
+}
+
+function renderReadout(kind) {
+  const ll = sum(UI[kind].terms);
+  UI[kind].ll = ll;
+  UI[kind].slot.set(`\\( L = \\prod_{i=1}^{${n}} p(x_i) = ${fmtLTeX(ll)} \\)`);
+}
+
+function render() {
+  for (const kind of ['one', 'mix']) { renderStage(kind); renderProfile(kind); renderSliders(kind); renderReadout(kind); }
+}
+
+// ---- animation: shrink the spike's sigma geometrically down to SDMIN ----------------------
+function stopAnim(kind) { if (anim[kind]) { anim[kind].stop(); anim[kind] = null; } }
+// the degenerate configuration for a spike on x_k: component 1 is the MLE of the other n-1 points
+function collapseConfig(k) {
+  const rest = X.filter((v, i) => i !== k), m = d3.mean(rest);
+  return { pi: (n - 1) / n, mu1: m, sd1: Math.sqrt(d3.mean(rest, v => (v - m) ** 2)) };
+}
+function shrink(kind) {
+  stopAnim(kind);
+  const mkey = CHIPKEY[kind];                                   // first put the mean exactly on the nearest data point
+  if (X.indexOf(S[kind][mkey]) < 0) S[kind][mkey] = X[d3.minIndex(X, v => Math.abs(v - S[kind][mkey]))];
+  if (kind === 'mix') Object.assign(S.mix, collapseConfig(X.indexOf(S.mix.mu2)));
+  const key = kind === 'one' ? 'sd' : 'sd2', T = 3000;
+  const s0 = S[kind][key] <= SDMIN * 1.0001 ? s : S[kind][key];   // already collapsed: replay from sigma = s
+  anim[kind] = d3.timer(el => {
+    const u = Math.min(1, el / T);
+    S[kind][key] = u >= 1 ? SDMIN : s0 * Math.pow(SDMIN / s0, u);
+    syncSliders(kind); render();
+    if (u >= 1) stopAnim(kind);
+  });
+}
+function setState(kind, vals) { stopAnim(kind); Object.assign(S[kind], vals); syncSliders(kind); render(); }
+
+// ---- main ---------------------------------------------------------------------------------
+function main() {
+  if (main.done) return;                                        // jsdom fires load twice
+  main.done = true;
+  document.getElementById('model-one').innerHTML =
+    `\\( \\textcolor[RGB]{${rgb(BLU)}}{p(x)} = \\textcolor[RGB]{${rgb(BLU)}}{N(x;\\,\\mu,\\sigma^2)} \\)`;
+  document.getElementById('model-mix').innerHTML =
+    `\\( \\textcolor[RGB]{${rgb(PUR)}}{p(x)} = \\pi_1\\,\\textcolor[RGB]{${rgb(BLU)}}{N(x;\\,\\mu_1,\\sigma_1^2)} + \\pi_2\\,\\textcolor[RGB]{${rgb(VER)}}{N(x;\\,\\mu_2,\\sigma_2^2)}, \\quad \\pi_1+\\pi_2=1 \\)`;
+  mjRun([document.getElementById('model-one'), document.getElementById('model-mix')]);
+  for (const kind of ['one', 'mix']) {
+    UI[kind].slot = new MathSlot(document.getElementById('ll-' + kind));
+    buildStage(kind); buildSliders(kind); buildProfile(kind); syncSliders(kind);
+  }
+  document.getElementById('btn-one-mle').addEventListener('click', () => setState('one', { mu: xbar, sd: s }));
+  document.getElementById('btn-one-shrink').addEventListener('click', () => shrink('one'));
+  document.getElementById('btn-mix-same').addEventListener('click', () => setState('mix', { ...START.mix }));
+  document.getElementById('btn-mix-em').addEventListener('click', () => setState('mix', { ...EMFIT }));
+  document.getElementById('btn-mix-shrink').addEventListener('click', () => shrink('mix'));
+  render();
+
+  window.__api = {
+    X, n, xbar, s, SDMIN, SDMAX, LLHAT, EMFIT, START, S, UI,
+    llOne, llMix, termsOne, termsMix, emStep, profileLL, tOf, sdOf, clipBand, fmtFactor, fmtLTeX, collapseConfig,
+    set: setState, click: (kind, i) => { stopAnim(kind); S[kind][CHIPKEY[kind]] = X[i]; syncSliders(kind); render(); },
+    shrink, stop: stopAnim, render, animating: kind => kind ? anim[kind] !== null : (anim.one !== null || anim.mix !== null),
+    tex: () => ({ one: UI.one.slot.cur, mix: UI.mix.slot.cur }),
+    flush: () => { for (const k of ['one', 'mix']) { if (UI[k].slot.timer) { clearTimeout(UI[k].slot.timer); UI[k].slot.timer = null; UI[k].slot.flush(); } } },
+  };
+}
+window.addEventListener('load', main);
+</script>
+</body>
+</html>
