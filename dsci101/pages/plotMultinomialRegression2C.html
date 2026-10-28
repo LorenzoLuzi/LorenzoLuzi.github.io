@@ -349,6 +349,22 @@ function plotMultinomialRegression2C(){
     </head>
     <body onload="plotMultinomialRegression2C()">
         <div id="myplot"></div>
+<!-- ===== MULTINOMIAL REGRESSION EQUATION (comment out or delete this whole block to remove it) ===== -->
+<style>
+    .equation { font-family: Arial, sans-serif; font-size: 18px; text-align: center; margin: 12px auto 16px; line-height: 1.6; }
+    .equation .row { margin: 4px 0; }
+    .equation .frac { display: inline-block; vertical-align: middle; text-align: center; }
+    .equation .frac > span { display: block; padding: 0 5px; }
+    .equation .frac .num { border-bottom: 1.5px solid #000; }
+    .equation .note { font-size: 14px; color: #555; margin: 6px auto 0; max-width: 720px; }
+</style>
+<div class="equation">
+    <div class="row">Scores: &nbsp; s<sub>0</sub> = d<sub>0</sub>&middot;x<sub>1</sub> + c<sub>0</sub>&middot;x<sub>2</sub> + b<sub>0</sub> &nbsp;&nbsp;&nbsp; s<sub>1</sub> = d<sub>1</sub>&middot;x<sub>1</sub> + c<sub>1</sub>&middot;x<sub>2</sub> + b<sub>1</sub></div>
+    <div class="row">Probability that y = 0 &nbsp;=&nbsp; <span class="frac"><span class="num">e<sup>s<sub>0</sub></sup></span><span class="den">e<sup>s<sub>0</sub></sup> + e<sup>s<sub>1</sub></sup> + 1</span></span> &nbsp;&nbsp;&nbsp;&nbsp; Probability that y = 1 &nbsp;=&nbsp; <span class="frac"><span class="num">e<sup>s<sub>1</sub></sup></span><span class="den">e<sup>s<sub>0</sub></sup> + e<sup>s<sub>1</sub></sup> + 1</span></span> &nbsp;&nbsp;&nbsp;&nbsp; Probability that y = 2 &nbsp;=&nbsp; <span class="frac"><span class="num">1</span><span class="den">e<sup>s<sub>0</sub></sup> + e<sup>s<sub>1</sub></sup> + 1</span></span></div>
+    <div class="note">The sliders change the variables in the formula. Class 2 is the "baseline" class, so its score is fixed at 0 (and e<sup>0</sup> = 1). The three probabilities always add up to 1.</div>
+</div>
+<!-- ===== END MULTINOMIAL REGRESSION EQUATION ===== -->
+
         <form onsubmit="return false;">
             <div>
                 <label for="d0Slider">d<sub>0</sub> =</label>

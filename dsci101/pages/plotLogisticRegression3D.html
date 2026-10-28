@@ -261,6 +261,21 @@ function plotLogisticRegression3D() {
         </scene>
       </x3d>
       </div>
+<!-- ===== LOGISTIC REGRESSION EQUATION (comment out or delete this whole block to remove it) ===== -->
+<style>
+    .equation { font-family: Arial, sans-serif; font-size: 18px; text-align: center; margin: 12px auto 16px; line-height: 1.6; }
+    .equation .row { margin: 4px 0; }
+    .equation .frac { display: inline-block; vertical-align: middle; text-align: center; }
+    .equation .frac > span { display: block; padding: 0 5px; }
+    .equation .frac .num { border-bottom: 1.5px solid #000; }
+    .equation .note { font-size: 14px; color: #555; margin: 6px auto 0; max-width: 720px; }
+</style>
+<div class="equation">
+    <div class="row">Probability that y = 1 &nbsp;=&nbsp; <span class="frac"><span class="num">1</span><span class="den">1 + e<sup>&minus;(c<sub>1</sub>&middot;x<sub>1</sub> + c<sub>2</sub>&middot;x<sub>2</sub> + b)</sup></span></span></div>
+    <div class="note">The sliders change the variables in the formula. The red line on the left is where c<sub>1</sub>&middot;x<sub>1</sub> + c<sub>2</sub>&middot;x<sub>2</sub> + b = 0, i.e. where the probability is exactly 50%.</div>
+</div>
+<!-- ===== END LOGISTIC REGRESSION EQUATION ===== -->
+
         
       <center>
         <div>
