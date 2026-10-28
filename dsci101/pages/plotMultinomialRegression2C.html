@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <title>Multinomial Regression</title>
+
+        <script src="https://d3js.org/d3.v7.js"></script>
+        <script src="../scripts/plottingFunctions.js"></script>
+        <script src="../scripts/twoDimensions.js"></script>
+        <script src="../scripts/threeDimensions.js"></script>
+    <script src="../scripts/dataLoader.js"></script>
+<script>
+
+
+function getSoftmaxProbabilities(x1, x2, d0, d1, c0, c1, b0, b1) {
+    // class 2 is the reference class
+    // calculates the softmax probabilities of all the points
+    const logits = [d0 * x1 + c0 * x2 + b0, d1 * x1 + c1 * x2 + b1, 0];
+    const expValues = logits.map(value => Math.exp(value));
+    const denominator = expValues.reduce((sum, value) => sum + value, 0);
+
+    return expValues.map(value => 100 * value / denominator);
+}
+
+function getPredictedClass(probabilities) {
+    let bestIndex = 0;
+
+    for (let i = 1; i < probabilities.length; i++) {
+        if (probabilities[i] > probabilities[bestIndex]) {
+            bestIndex = i;
+        }
+    }
+
+    return bestIndex;
+}
+
+function getAnnotatedPoints(data, d0, d1, c0, c1, b0, b1) {
+    const colors = ["blue", "orange", "red"];
+    let correctCount = 0;
+
+    // Map each 2D point to its softmax prediction and display metadata.
+    const annotated = data.map(point => {
+        const probabilities = getSoftmaxProbabilities(
+            point.x1,
+            point.x2,
+            d0,
+            d1,
+            c0,
+            c1,
+            b0,
+            b1
+        );
+        const predictedClass = getPredictedClass(probabilities);
+        const isCorrect = predictedClass === point.label;
+
+        if (isCorrect) {
+            correctCount += 1;
+        }
+
+        //
+        return {
+            ...point,
+            y: 0,
+            color: colors[point.label],
+            marker: isCorrect ? "o" : "x",
+            predictedClass: predictedClass,
+            probabilities: probabilities
+        };
+    });
+
+    return {
+        points: annotated,
+        accuracy: 100 * correctCount / data.length
+    };
+}
+
+function drawMultinomialPoints(svg, points, xScale, yScale) {
+    // get all the circle points and cross points through
+    const circlePoints = points.filter(point => point.marker === "o");
+    const crossPoints = points.filter(point => point.marker === "x");
+
+    svg.append("g")
+        .selectAll("circle")
+        .data(circlePoints)
+        .enter()
+        .append("circle")
+        .attr("cx", point => xScale(point.x1))
+        .attr("cy", point => yScale(point.x2))
+        .attr("r", 5)
+        .attr("fill", point => point.color)
+        .attr("stroke", "white")
+        .attr("stroke-width", 1.5);
+
+    // Find the center points for drawing x's
+    const crosses = svg.append("g")
+        .selectAll("g")
+        .data(crossPoints)
+        .enter()
+        .append("g")
+        .attr("transform", point => `translate(${xScale(point.x1)},${yScale(point.x2)})`);
+    
+        // Drawing x's: first line
+    crosses.append("line")
+        .attr("x1", -6)
+        .attr("y1", -6)
+        .attr("x2", 6)
+        .attr("y2", 6)
+        .attr("stroke", point => point.color)
+        .attr("stroke-width", 2.5)
+        .attr("stroke-linecap", "round");
+
+    // Drawing x's: second line
+    crosses.append("line")
+        .attr("x1", -6)
+        .attr("y1", 6)
+        .attr("x2", 6)
+        .attr("y2", -6)
+        .attr("stroke", point => point.color)
+        .attr("stroke-width", 2.5)
+        .attr("stroke-linecap", "round");
+}
+
+function drawDecisionRegions(svg, xScale, yScale, x1lims, x2lims, d0, d1, c0, c1, b0, b1){
+
+    const nx = 120;
+    const ny = 90;
+
+    // size of the little rectangles
+    const dx = (x1lims[1] - x1lims[0]) / nx;
+    const dy = (x2lims[1] - x2lims[0]) / ny;
+
+    const colors = ["blue", "orange", "red"];
+    const cells = [];
+
+    for (let j = 0; j < ny; j++) {
+        for (let i = 0; i < nx; i++) {
+            // get the rectangle values
+            const x1 = x1lims[0] + i * dx;
+            const x2 = x2lims[0] + j * dy;
+            const probs = getSoftmaxProbabilities(x1, x2, d0, d1, c0, c1, b0, b1);
+            const predictedClass = getPredictedClass(probs);
+
+            cells.push({ x1, x2, predictedClass });
+        }
+    }
+    // Makes it not so smooth, but I wasn't sure how else to do it
+    svg.append("g")
+        .selectAll("rect")
+        .data(cells)
+        .enter()
+        .append("rect")
+        .attr("x", d => xScale(d.x1))
+        .attr("y", d => yScale(d.x2 + dy))
+        .attr("width", xScale(x1lims[0] + dx) - xScale(x1lims[0]))
+        .attr("height", yScale(x2lims[0]) - yScale(x2lims[0] + dy))
+        .attr("fill", d => colors[d.predictedClass])
+        .attr("opacity", 0.18);
+}
+
+let isSceneInitialized = false;
+let scene; 
+// let initialData; I think that it's helpful to do outside the renderPlot function
+
+function plotMultinomialRegression2C(){
+
+    // Settings that I saw in logistic regression
+    const colorGrid = "#d9c7d7";
+    let font = 'Arial';
+    removePlot("#myplot");
+    var margin = {top: 60, right: 220, bottom: 80, left: 100},
+                width = 800 - margin.left - margin.right,
+                height = 450 - margin.top - margin.bottom;
+    var svg = appendSvg("#myplot", width, height, margin);
+    function renderPlot(){
+        if (!isSceneInitialized){
+            scene = d3.select("#myplot scene");
+            
+            const scene_size = 10;
+            const num_grid_lines = 21;
+            const color_grid = "#E0E0E0";
+            drawGrid(scene, scene_size, num_grid_lines, color_grid);
+            
+
+            isSceneInitialized = true;
+        }
+    }
+    renderPlot(); 
+
+    const d0 = parseFloat(document.getElementById("d0Box").value) || 0;
+    const d1 = parseFloat(document.getElementById("d1Box").value) || 0;
+    const c0 = parseFloat(document.getElementById("c0Box").value) || 0;
+    const c1 = parseFloat(document.getElementById("c1Box").value) || 0;
+    const b0 = parseFloat(document.getElementById("b0Box").value) || 0;
+    const b1 = parseFloat(document.getElementById("b1Box").value) || 0;
+
+    const { data: initialData, x1lims, x2lims } = getData("multinomial2c", () => DataGen.multinomial2c(50));
+    const { points, accuracy } = getAnnotatedPoints(initialData, d0, d1, c0, c1, b0, b1);
+    const [xmin1, xmax1] = x1lims;
+    const [xmin2, xmax2] = x2lims;
+
+    // using helper functions for the 2D axes
+    const x = addXAxis(svg, xmin1, xmax1, width, height);
+    const y = addYAxis(svg, xmin2, xmax2, width, height);
+
+    drawDecisionRegions(svg, x, y, x1lims, x2lims, d0, d1, c0, c1, b0, b1);
+    drawGridlines(7, 9, width, height, colorGrid);
+    drawMultinomialPoints(svg, points, x, y);
+
+    // Add title
+    addTitle(`Doing Multinomial Regression Manually: accuracy = ${accuracy.toFixed(1)}%`, '#myplot');
+
+    // y label
+    addYLabel(svg, font, height, -margin.left / 2, "x2");
+
+    // x label
+    addXLabel(svg, font, width, height, margin, "x1");
+
+    d3.select("#legend").remove();
+
+    addLegendEntry('#myplot', "y=2; pred=2", "circle", 'red', 190, 10);
+    addLegendEntry('#myplot', "y=2; pred wrong", "x", 'red', 190, 10);
+    addLegendEntry('#myplot', "y=1; pred=1", "circle", 'orange', 190, 10);
+    addLegendEntry('#myplot', "y=1; pred wrong", "x", 'orange', 190, 10);
+    addLegendEntry('#myplot', "y=0; pred=0", "circle", 'blue', 190, 10);
+    addLegendEntry('#myplot', "y=0; pred wrong", "x", 'blue', 190, 10);
+
+    function solveRegression() {
+        // computation offline and then hardcode here
+        document.getElementById("d0Slider").value = -630;
+        document.getElementById("d0Box").value = -6.3;
+        document.getElementById("d1Slider").value = -0.95;
+        document.getElementById("d1Box").value = -0.95;
+        document.getElementById("c0Slider").value = -7.25;
+        document.getElementById("c0Box").value = -7.25;
+        document.getElementById("c1Slider").value = -2.90;
+        document.getElementById("c1Box").value = -2.90;
+        document.getElementById("b0Slider").value = -0.38;
+        document.getElementById("b0Box").value = -0.38;
+        document.getElementById("b1Slider").value = 10.0;
+        document.getElementById("b1Box").value = 10.0;
+
+    }
+
+    window.solveRegression = solveRegression;
+}
+    </script>
+
+        <link rel="stylesheet" href="../styling/global.css">
+        <style>
+            body {
+              margin: 0;
+              padding: 24px 20px 40px;
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              font-family: Arial, sans-serif;
+              /* background: #faf8fc; */
+            }
+
+            #myplot {
+              width: min(980px, 100%);
+              overflow-x: auto;
+              background: rgba(255, 255, 255, 0.92);
+              /* border: 1px solid #d8d0de; */
+              border-radius: 12px;
+            }
+
+            #myplot svg {
+              display: block;
+              margin: 0 auto;
+            }
+
+            form {
+              display: grid;
+              gap: 12px;
+              width: min(980px, 100%);
+              margin-top: 18px;
+            }
+
+            form > div {
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              gap: 12px;
+              flex-wrap: wrap;
+            }
+
+            label {
+              min-width: 58px;
+              font-size: 18px;
+            }
+
+            /* The font size of the numbers */
+            input[type="number"]
+            {
+                width: 90px;
+                padding: 5px 8px;
+                font-size:16px;
+            }
+            
+            /* The sliders */
+            .slider {
+              -webkit-appearance: none;
+              width: min(420px, 55vw);
+              height: 10px;
+              border-radius: 2px;  
+              background: #d3d3d3; /*Bar color*/
+              outline: none;
+              opacity: 0.7;
+              -webkit-transition: .2s;
+              transition: opacity .2s;
+            }
+            
+            /* The buttons */
+            .button {
+              width: 90px;
+            }
+            
+            /* Mouse-over effects */
+            .slider::-webkit-slider-thumb {
+              -webkit-appearance: none;
+              appearance: none;
+              width: 25px;
+              height: 25px;
+              border-radius: 50%; 
+              background: #0072BD; /*Dot color*/
+              cursor: pointer;
+            }
+
+            /* The slider handle (use -webkit- (Chrome, Opera, Safari, Edge) and -moz- (Firefox) to override default look) */
+            .slider::-moz-range-thumb {
+              width: 25px;
+              height: 25px;
+              border-radius: 50%;
+              background: #0072BD; /*Dot color*/
+              cursor: pointer;
+            }
+
+            /* The style for the button */
+            .button2 {
+              padding: 10px 20px;
+              text-align: center;
+              font-size: 16px;
+              margin: 4px 2px;
+              cursor: pointer;
+            }
+
+        </style>
+    </head>
+    <body onload="plotMultinomialRegression2C()">
+        <div id="myplot"></div>
+        <form onsubmit="return false;">
+            <div>
+                <label for="d0Slider">d<sub>0</sub> =</label>
+                <input id="d0Slider", type="range", name="d0Slider", size="7", class="slider", 
+                        value="0.00", step="0.1", min="-10",  max="10", oninput="this.form.d0Box.value=this.value; plotMultinomialRegression2C()">
+                <input id="d0Box", type="number", name="d0Box", size="20", class="button",
+                        value="0.00", step="0.1", min="-10",  max="10", oninput="this.form.d0Slider.value=this.value; plotMultinomialRegression2C()" />
+            </div>
+            <div>
+                <label for="d1Slider">d<sub>1</sub> =</label>
+                <input id="d1Slider", type="range", name="d1Slider", size="7", class="slider", 
+                        value="0.00", step="0.1", min="-10", max="10", oninput="this.form.d1Box.value=this.value; plotMultinomialRegression2C()">
+                <input id="d1Box", type="number", name="d1Box", size="20", class="button",
+                        value="0.00", step="0.1", min="-10", max="10", oninput="this.form.d1Slider.value=this.value; plotMultinomialRegression2C()" />
+            </div>
+            <div>
+                <label for="c0Slider">c<sub>0</sub> =</label>
+                <input id="c0Slider", type="range", name="c0Slider", size="7", class="slider", 
+                        value="0.00", step="0.1", min="-10",  max="10", oninput="this.form.c0Box.value=this.value; plotMultinomialRegression2C()">
+                <input id="c0Box", type="number", name="c0Box", size="20", class="button",
+                        value="0.00", step="0.1", min="-10",  max="10", oninput="this.form.c0Slider.value=this.value; plotMultinomialRegression2C()" />
+            </div>
+            <div>
+                <label for="c1Slider">c<sub>1</sub> =</label>
+                <input id="c1Slider", type="range", name="c1Slider", size="7", class="slider", 
+                        value="0.00", step="0.1", min="-10", max="10", oninput="this.form.c1Box.value=this.value; plotMultinomialRegression2C()">
+                <input id="c1Box", type="number", name="c1Box", size="20", class="button",
+                        value="0.00", step="0.1", min="-10", max="10", oninput="this.form.c1Slider.value=this.value; plotMultinomialRegression2C()" />
+            </div>
+            <div>
+                <label for="b0Slider">b<sub>0</sub> =</label>
+                <input id="b0Slider", type="range", name="b0Slider", size="7", class="slider", 
+                        value="0.00", step="0.1", min="-10", max="10", oninput="this.form.b0Box.value=this.value; plotMultinomialRegression2C()">
+                <input id="b0Box", type="number", name="b0Box", size="20", class="button",
+                        value="0.00", step="0.1", min="-10", max="10", oninput="this.form.b0Slider.value=this.value; plotMultinomialRegression2C()" />
+            </div>
+            <div>
+                <label for="b1Slider">b<sub>1</sub> =</label>
+                <input id="b1Slider", type="range", name="b01Slider", size="7", class="slider", 
+                        value="0.00", step="0.1", min="-10", max="10", oninput="this.form.b1Box.value=this.value; plotMultinomialRegression2C()">
+                <input id="b1Box", type="number", name="b1Box", size="20", class="button",
+                        value="0.00", step="0.1", min="-10", max="10", oninput="this.form.b1Slider.value=this.value; plotMultinomialRegression2C()" />
+            </div>
+        
+            <!-- Create the solve button -->
+            <div><button id="optimal", type="button", name="optimal", class="button2", 
+                    onclick="  
+                        if (window.solveRegression) solveRegression();
+                        plotMultinomialRegression2C();">
+                Solution!</button>
+            </div>
+        </form>
+    </body>
+</html>

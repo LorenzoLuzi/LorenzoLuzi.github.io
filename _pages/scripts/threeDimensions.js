@@ -85,8 +85,25 @@ function drawPoints(scene, data, logistic=false) {
             shape.append("Sphere")
                  .attr("radius", "0.15");
         } else if (d.marker === 'x') {
-            shape.append("Box")
-                 .attr("size", "0.2 0.2 0.2"); 
+            // Draw a 3D "X": two crossed bars standing in the x1-y plane and
+            // two more in the x2-y plane, so it reads as an X from any angle.
+            const color = d.color || '#3070B7';
+            const parent = d3.select(this.parentNode);
+            shape.remove();
+            const bars = [
+                "0 0 1 0.7854",  "0 0 1 -0.7854",   // X facing the +z viewer
+                "1 0 0 0.7854",  "1 0 0 -0.7854"    // X facing the +x viewer
+            ];
+            bars.forEach(rotation => {
+                const bar = parent.append("Transform")
+                    .attr("rotation", rotation)
+                    .append("Shape");
+                bar.append("Appearance")
+                    .append("Material")
+                    .attr("diffuseColor", color);
+                bar.append("Box")
+                    .attr("size", rotation.startsWith("0 0 1") ? "0.45 0.08 0.08" : "0.08 0.45 0.08");
+            });
         }
     });
 }

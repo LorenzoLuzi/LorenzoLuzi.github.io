@@ -93,7 +93,7 @@ function plotLogisticRegression2D() {
     }
 
     // Add dots
-    addDots(svg, data, x, y, color_data);
+    addDots(svg, data, x, y, color_data, false, true);
     
     // Title
     addTitle(`Doing Logistic Regression Manually: accuracy = ${accuracy.toFixed(1)}%`, '#myplot', '0px');

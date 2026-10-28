@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Multinomial Regression</title>
+
+    <script src="https://d3js.org/d3.v7.js"></script>
+    <script src="../scripts/plottingFunctions.js"></script>
+    <script src="../scripts/twoDimensions.js"></script>
+    <script src="../scripts/dataLoader.js"></script>
+<script>
+
+
+function getSoftmaxProbabilities(x, c0, c1, b0, b1) {
+    // class 2 is the reference class
+    // calculates the softmax probabilities of all the points
+    const logits = [c0 * x + b0, c1 * x + b1, 0];
+    const expValues = logits.map(value => Math.exp(value));
+    const denominator = expValues.reduce((sum, value) => sum + value, 0);
+
+    return expValues.map(value => 100 * value / denominator);
+}
+
+function getPredictedClass(probabilities) {
+    let bestIndex = 0;
+
+    for (let i = 1; i < probabilities.length; i++) {
+        if (probabilities[i] > probabilities[bestIndex]) {
+            bestIndex = i;
+        }
+    }
+
+    return bestIndex;
+}
+
+function getAnnotatedPoints(data, c0, c1, b0, b1) {
+    const colors = ["blue", "orange", "red"];
+    const yLevels = [0, 50, 100];
+    let correctCount = 0;
+
+    // maps data to include more information about a data point
+    const annotated = data.map(point => {
+        const probabilities = getSoftmaxProbabilities(point.x, c0, c1, b0, b1);
+        const predictedClass = getPredictedClass(probabilities);
+        const isCorrect = predictedClass === point.label;
+
+        if (isCorrect) {
+            correctCount += 1;
+        }
+
+        // returns marker "o" for correct and "x" for incorrect
+        return {
+            ...point,
+            color: colors[point.label],
+            marker: isCorrect ? "o" : "x",
+            predictedClass: predictedClass,
+            yPlot: yLevels[point.label]
+        };
+    });
+
+    // returns annotation information and accuracy
+    return {
+        points: annotated,
+        accuracy: 100 * correctCount / data.length
+    };
+}
+
+function drawMultinomialPoints(svg, points, xScale, yScale) {
+    // get all the circle points and cross points through
+    const circlePoints = points.filter(point => point.marker === "o");
+    const crossPoints = points.filter(point => point.marker === "x");
+
+    svg.append("g")
+        .selectAll("circle")
+        .data(circlePoints)
+        .enter()
+        .append("circle")
+        .attr("cx", point => xScale(point.x))
+        .attr("cy", point => yScale(point.yPlot))
+        .attr("r", 5)
+        .attr("fill", point => point.color)
+        .attr("stroke", "white")
+        .attr("stroke-width", 1.5);
+
+    const crosses = svg.append("g")
+        .selectAll("g")
+        .data(crossPoints)
+        .enter()
+        .append("g")
+        .attr("transform", point => `translate(${xScale(point.x)},${yScale(point.yPlot)})`);
+
+    crosses.append("line")
+        .attr("x1", -6)
+        .attr("y1", -6)
+        .attr("x2", 6)
+        .attr("y2", 6)
+        .attr("stroke", point => point.color)
+        .attr("stroke-width", 2.5)
+        .attr("stroke-linecap", "round");
+
+    crosses.append("line")
+        .attr("x1", -6)
+        .attr("y1", 6)
+        .attr("x2", 6)
+        .attr("y2", -6)
+        .attr("stroke", point => point.color)
+        .attr("stroke-width", 2.5)
+        .attr("stroke-linecap", "round");
+}
+
+function drawBoundaryLine(svg, xScale, yScale, xValue, dashArray) {
+    const [xmin, xmax] = xScale.domain();
+
+    if (!Number.isFinite(xValue) || xValue < xmin || xValue > xmax) {
+        return;
+    }
+
+    const xCoord = xScale(xValue);
+
+    svg.append("line")
+        .attr("x1", xCoord)
+        .attr("y1", yScale(0))
+        .attr("x2", xCoord)
+        .attr("y2", yScale(100))
+        .attr("stroke", "#2f8f46")
+        .attr("stroke-width", 2.25)
+        .attr("stroke-dasharray", dashArray)
+        .attr("stroke-opacity", 0.85);
+}
+
+function addMultinomialRightAxis(svg, yScale, width) {
+    const rightAxis = d3.axisRight(yScale)
+        .tickValues([0, 50, 100])
+        .tickFormat(value => String(value / 50));
+
+    const axis = svg.append("g")
+        .attr("transform", `translate(${width},0)`)
+        .call(rightAxis);
+
+    axis.selectAll("text")
+        .style("font-weight", "bold")
+        .style("font-size", "14px")
+        .attr("fill", value => {
+            if (value === 0) {
+                return "blue";
+            }
+            if (value === 50) {
+                return "orange";
+            }
+            return "red";
+        });
+}
+
+let isSceneInitialized = false;
+let scene; 
+let data;
+
+function plotMultinomialRegression() {
+    const colorGrid = "#d9c7d7";
+    const font = "Arial";
+
+    function renderPlot() {
+        scene = d3.select("#myplot scene");
+
+        if (!isSceneInitialized) {
+            data = getData("multinomial", () => DataGen.multinomial(50)).data;
+            isSceneInitialized = true;
+        }
+
+        const xValues = data.map(point => point.x);
+        const xmin = d3.min(xValues);
+        const xmax = d3.max(xValues);
+        const range = xmax - xmin || 1;
+
+        return {
+            data: data,
+            xlims: [xmin - 0.1 * range, xmax + 0.1 * range]
+        };
+    }
+
+    d3.select("#myplot").selectAll("svg").remove();
+
+    // some AI generated settings
+    const margin = { top: 60, right: 95, bottom: 80, left: 90 };
+    const width = 900 - margin.left - margin.right;
+    const height = 450 - margin.top - margin.bottom;
+
+    const svg = appendSvg("#myplot", width, height, margin);
+
+    const { data: initialData, xlims } = renderPlot();
+
+    // get slider values
+    const c0 = parseFloat(document.getElementById("c0Box").value) || 0;
+    const c1 = parseFloat(document.getElementById("c1Box").value) || 0;
+    const b0 = parseFloat(document.getElementById("b0Box").value) || 0;
+    const b1 = parseFloat(document.getElementById("b1Box").value) || 0;
+
+    // setting up points
+    const { points, accuracy } = getAnnotatedPoints(initialData, c0, c1, b0, b1);
+    const [xmin, xmax] = xlims;
+
+    // using helper function for X axis
+    const x = addXAxis(svg, xmin, xmax, width, height);
+
+    // creating linear Y axis using d3, with tick values 0, 25, 50, 75, 100
+    const y = d3.scaleLinear()
+        .domain([0, 100])
+        .range([height, 0]);
+
+    svg.append("g")
+        .attr("class", "yClass")
+        .call(d3.axisLeft(y).tickValues([0, 25, 50, 75, 100]));
+
+    // drawing gridlines using helper function
+
+    drawGridlines(7, 9, width, height, colorGrid);
+
+    // drawing estimate lines using helper function
+    
+    drawEstimateLine(
+        svg,
+        x,
+        y,
+        xmin,
+        xmax,
+        value => getSoftmaxProbabilities(value, c0, c1, b0, b1)[0],
+        "blue"
+    );
+    drawEstimateLine(
+        svg,
+        x,
+        y,
+        xmin,
+        xmax,
+        value => getSoftmaxProbabilities(value, c0, c1, b0, b1)[1],
+        "orange"
+    );
+    drawEstimateLine(
+        svg,
+        x,
+        y,
+        xmin,
+        xmax,
+        value => getSoftmaxProbabilities(value, c0, c1, b0, b1)[2],
+        "red"
+    );
+
+    // drawing boundary lines using helper functions
+    if (c0 !== c1) {
+        const xValue = (b1 - b0) / (c0 - c1);
+        const probabilities = getSoftmaxProbabilities(xValue, c0, c1, b0, b1);
+        if (probabilities[0] >= probabilities[2]) {
+            drawBoundaryLine(svg, x, y, xValue, "6,4");
+        }
+    }
+
+    if (c1 !== 0) {
+        const xValue = -b1 / c1;
+        const probabilities = getSoftmaxProbabilities(xValue, c0, c1, b0, b1);
+        if (probabilities[1] >= probabilities[0]) {
+            drawBoundaryLine(svg, x, y, xValue, "2,4");
+        }
+    }
+
+    if (c0 !== 0) {
+        const xValue = -b0 / c0;
+        const probabilities = getSoftmaxProbabilities(xValue, c0, c1, b0, b1);
+        if (probabilities[0] >= probabilities[1]) {
+            drawBoundaryLine(svg, x, y, xValue, "10,4,2,4");
+        }
+    }
+
+    // plotting points and classification on right side
+    drawMultinomialPoints(svg, points, x, y);
+    addMultinomialRightAxis(svg, y, width);
+
+    addTitle(
+        `Doing multinomial regression manually: accuracy = ${accuracy.toFixed(1)}%`,
+        "#myplot",
+        "0px"
+    );
+
+    addYLabel(svg, font, height, -margin.left / 2, "Probability (%)");
+    addYLabel(svg, font, height, width + 60, "Labels for y");
+    addXLabel(svg, font, width, height, margin, "x");
+
+    function solveRegression() {
+        // computation offline and then hardcode here
+        document.getElementById("c0Slider").value = -4.5;
+        document.getElementById("c0Box").value = -4.5;
+        document.getElementById("c1Slider").value = -3.0;
+        document.getElementById("c1Box").value = -3.0;
+        document.getElementById("b0Slider").value = 5.5;
+        document.getElementById("b0Box").value = 5.5;
+        document.getElementById("b1Slider").value = 7.3;
+        document.getElementById("b1Box").value = 7.3;
+    }
+
+    window.solveRegression = solveRegression;
+}
+    </script>
+
+    <link rel="stylesheet" href="../styling/global.css">
+
+    <style>
+        /* Could add more of these to global.css in the future */
+
+        body {
+            margin: 0;
+            padding: 24px 20px 40px;
+            display: flex;
+            justify-content: center;
+            font-family: Arial, sans-serif;
+            background: #faf8fc;
+        }
+
+        .page {
+            width: min(980px, 100%);
+        }
+
+        #myplot {
+            width: 100%;
+            overflow-x: auto;
+        }
+
+        #myplot svg {
+            display: block;
+            margin: 0 auto;
+        }
+
+        .legend-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(200px, 1fr));
+            gap: 10px 18px;
+            margin: 6px 0 20px;
+            padding: 14px 16px;
+            border: 1px solid #d8d0de;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.92);
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 15px;
+        }
+
+        .legend-swatch {
+            display: inline-block;
+            flex: 0 0 auto;
+            color: currentColor;
+        }
+
+        .legend-circle {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: currentColor;
+            border: 1px solid rgba(0, 0, 0, 0.2);
+        }
+
+        .legend-line {
+            width: 26px;
+            height: 0;
+            border-top: 3px solid currentColor;
+        }
+
+        .legend-x {
+            position: relative;
+            width: 14px;
+            height: 14px;
+        }
+
+        .legend-x::before,
+        .legend-x::after {
+            content: "";
+            position: absolute;
+            left: 6px;
+            top: -1px;
+            width: 2px;
+            height: 16px;
+            background: currentColor;
+            border-radius: 1px;
+        }
+
+        .legend-x::before {
+            transform: rotate(45deg);
+        }
+
+        .legend-x::after {
+            transform: rotate(-45deg);
+        }
+
+        .blue {
+            color: blue;
+        }
+
+        .orange {
+            color: orange;
+        }
+
+        .red {
+            color: red;
+        }
+
+        .controls {
+            display: grid;
+            gap: 14px;
+            width: 100%;
+        }
+
+        .control-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .control-row label {
+            min-width: 58px;
+            font-size: 18px;
+        }
+
+        input[type="number"] {
+            width: 90px;
+            padding: 5px 8px;
+            font-size: 16px;
+        }
+
+        .actions {
+            display: flex;
+            justify-content: center;
+            margin-top: 4px;
+        }
+    </style>
+</head>
+
+<body onload="plotMultinomialRegression()">
+    <div class="page">
+        <x3d id="myplot">
+            <scene>
+                <Viewpoint position="3 10 20" centerOfRotation="0 0 0" orientation="1 0 0 -0.5"></Viewpoint>
+            </scene>
+        </x3d>
+        <!-- Could replace these divs with more semantic html if desired -->
+        <div class="legend-grid">
+            <div class="legend-item red">
+                <span class="legend-swatch legend-circle"></span>
+                <span>y=2; pred=2</span>
+            </div>
+            <div class="legend-item red">
+                <span class="legend-swatch legend-x"></span>
+                <span>y=2; pred wrong</span>
+            </div>
+            <div class="legend-item red">
+                <span class="legend-swatch legend-line"></span>
+                <span>Probability y=2</span>
+            </div>
+
+            <div class="legend-item orange">
+                <span class="legend-swatch legend-circle"></span>
+                <span>y=1; pred=1</span>
+            </div>
+            <div class="legend-item orange">
+                <span class="legend-swatch legend-x"></span>
+                <span>y=1; pred wrong</span>
+            </div>
+            <div class="legend-item orange">
+                <span class="legend-swatch legend-line"></span>
+                <span>Probability y=1</span>
+            </div>
+
+            <div class="legend-item blue">
+                <span class="legend-swatch legend-circle"></span>
+                <span>y=0; pred=0</span>
+            </div>
+            <div class="legend-item blue">
+                <span class="legend-swatch legend-x"></span>
+                <span>y=0; pred wrong</span>
+            </div>
+            <div class="legend-item blue">
+                <span class="legend-swatch legend-line"></span>
+                <span>Probability y=0</span>
+            </div>
+        </div>
+
+        <!-- Same thing here, could make these divs into a table like some other plots if desired -->
+        <form class="controls" onsubmit="return false;">
+            <div class="control-row">
+                <label for="c0Slider">c<sub>0</sub> =</label>
+                <input
+                    id="c0Slider"
+                    type="range"
+                    name="c0Slider"
+                    class="slider"
+                    value="0"
+                    step="0.1"
+                    min="-50"
+                    max="50"
+                    oninput="this.form.c0Box.value=this.value; plotMultinomialRegression()"
+                >
+                <input
+                    id="c0Box"
+                    type="number"
+                    name="c0Box"
+                    value="0"
+                    step="0.1"
+                    min="-50"
+                    max="50"
+                    oninput="this.form.c0Slider.value=this.value; plotMultinomialRegression()"
+                >
+            </div>
+
+            <div class="control-row">
+                <label for="c1Slider">c<sub>1</sub> =</label>
+                <input
+                    id="c1Slider"
+                    type="range"
+                    name="c1Slider"
+                    class="slider"
+                    value="0"
+                    step="0.1"
+                    min="-50"
+                    max="50"
+                    oninput="this.form.c1Box.value=this.value; plotMultinomialRegression()"
+                >
+                <input
+                    id="c1Box"
+                    type="number"
+                    name="c1Box"
+                    value="0"
+                    step="0.1"
+                    min="-50"
+                    max="50"
+                    oninput="this.form.c1Slider.value=this.value; plotMultinomialRegression()"
+                >
+            </div>
+
+            <div class="control-row">
+                <label for="b0Slider">b<sub>0</sub> =</label>
+                <input
+                    id="b0Slider"
+                    type="range"
+                    name="b0Slider"
+                    class="slider"
+                    value="0"
+                    step="0.1"
+                    min="-50"
+                    max="50"
+                    oninput="this.form.b0Box.value=this.value; plotMultinomialRegression()"
+                >
+                <input
+                    id="b0Box"
+                    type="number"
+                    name="b0Box"
+                    value="0"
+                    step="0.1"
+                    min="-50"
+                    max="50"
+                    oninput="this.form.b0Slider.value=this.value; plotMultinomialRegression()"
+                >
+            </div>
+
+            <div class="control-row">
+                <label for="b1Slider">b<sub>1</sub> =</label>
+                <input
+                    id="b1Slider"
+                    type="range"
+                    name="b1Slider"
+                    class="slider"
+                    value="0"
+                    step="0.1"
+                    min="-50"
+                    max="50"
+                    oninput="this.form.b1Box.value=this.value; plotMultinomialRegression()"
+                >
+                <input
+                    id="b1Box"
+                    type="number"
+                    name="b1Box"
+                    value="0"
+                    step="0.1"
+                    min="-50"
+                    max="50"
+                    oninput="this.form.b1Slider.value=this.value; plotMultinomialRegression()"
+                >
+            </div>
+
+            <div class="actions">
+                <button
+                    id="optimal"
+                    type="button"
+                    class="button2"
+                    onclick="solveRegression(); plotMultinomialRegression();"
+                >
+                    Solution!
+                </button>
+            </div>
+        </form>
+    </div>
+</body>
+</html>

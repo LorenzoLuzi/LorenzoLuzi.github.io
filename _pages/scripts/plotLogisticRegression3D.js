@@ -143,7 +143,7 @@ function plotLogisticRegression3D() {
     }
 
     // Add 2D dots
-    addDots(svg, data, x1, x2, color_data, true);
+    addDots(svg, data, x1, x2, color_data, true, true);
     
     // Redraw 2D title
     addTitle(`Doing Logistic Regression Manually: accuracy = ${accuracy.toFixed(1)}%`, '#myplot1');
@@ -158,8 +158,8 @@ function plotLogisticRegression3D() {
 
     // Legend entries
     addLegendEntry('#myplot1', "y=1; pred=1", "circle", 'orange', 200, -200);
-    addLegendEntry('#myplot1', "y=1; pred=0", "square", 'orange', 200, -200);
-    addLegendEntry('#myplot1', "y=0; pred=0", "square", 'blue', 200, -200);
+    addLegendEntry('#myplot1', "y=1; pred=0", "x", 'orange', 200, -200);
+    addLegendEntry('#myplot1', "y=0; pred=0", "x", 'blue', 200, -200);
     addLegendEntry('#myplot1', "y=0; pred=1", "circle", 'blue', 200, -200);
 
     // Find the solution to the regression

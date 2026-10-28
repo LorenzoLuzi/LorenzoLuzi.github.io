@@ -137,7 +137,8 @@ function drawEstimateLine(svg, x, y, xmin, xmax, predictY, color_estimate, numPo
         );
 }
 
-function addDots(svg, data, x, y, color_data, x2_present=false) {
+function addDots(svg, data, x, y, color_data, x2_present=false, x_as_cross=false) {
+    // x_as_cross: draw misclassified points (marker 'x') as an X instead of a diamond
     // Add dots to the plot
     const circleGenerator = d3.symbol()
         .type(d3.symbolCircle)
@@ -146,6 +147,12 @@ function addDots(svg, data, x, y, color_data, x2_present=false) {
     const squareGenerator = d3.symbol()
         .type(d3.symbolSquare)
         .size(60);
+
+    // Hand-drawn X (two crossing strokes); does not rely on d3.symbolX,
+    // which is missing from older d3 v7 builds.
+    const crossSize = 5;
+    const crossPath = `M${-crossSize},${-crossSize}L${crossSize},${crossSize}M${crossSize},${-crossSize}L${-crossSize},${crossSize}`;
+    const isCross = d => x_as_cross && d.marker === 'x';
 
     svg.append('g')
     .selectAll("dot")
@@ -156,21 +163,35 @@ function addDots(svg, data, x, y, color_data, x2_present=false) {
         if (x2_present) {
             return "translate(" + x(d.x1) + "," + y(d.x2) + ")";
         }
+        if (x_as_cross) {
+            return "translate(" + x(d.x) + "," + y(d.y) + ")";
+        }
         return "translate(" + x(d.x) + "," + y(d.y) + ") rotate(45)";
     })
     .attr("d", function(d) {
         if (d.marker === undefined || d.marker === 'o') {
             return circleGenerator();
         } else if (d.marker === 'x') {
-            return squareGenerator(); 
+            return x_as_cross ? crossPath : squareGenerator(); 
         }
     })
     .style("fill", function(d) {
+        if (isCross(d)) {
+            return "none";
+        }
         if (d.color === undefined) {
             return color_data;
         }
         return d.color;
-    });
+    })
+    .style("stroke", function(d) {
+        if (!isCross(d)) {
+            return "none";
+        }
+        return (d.color === undefined) ? color_data : d.color;
+    })
+    .style("stroke-width", d => isCross(d) ? 2.5 : null)
+    .style("stroke-linecap", d => isCross(d) ? "round" : null);
 }
 
 function drawKnnCurve(svg, data, k, xScale, yScale, xmin, xmax) {
