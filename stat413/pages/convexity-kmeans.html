@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Convexity &amp; K-means Regions</title>
+  <link rel="stylesheet" href="../styling/global.css">
+
+  <!--
+    SOURCES (kept in source; not displayed in the applet UI)
+    - Entirely geometric/synthetic (no dataset): the shape galleries mirror the lecture
+      notes' two tikz rows (convex: circle, square, triangle, hexagon, trapezoid;
+      non-convex: crescent, star, horseshoe [standing in for the notes' S-stroke, which
+      is not a closed region], dented polygon, cross).
+    - Chord test: the segment between the draggable x and y is sampled at 80 lambdas and
+      each sample is classified by ray-casting point-in-polygon; red = outside.
+    - Tab 2: cells S_k = {x : ||x - mu_k|| <= ||x - mu_j|| for all j} with draggable means;
+      "reveal half-planes" shades, for each competitor j, the side allowed by the LINEAR
+      inequality 2 x^T (mu_j - mu_k) <= ||mu_j||^2 - ||mu_k||^2 (the notes' multiply-and-
+      combine identity); the stack's darkest overlap IS the cell — an intersection of
+      half-planes, hence convex.
+    - Tab 3 ("the catch", the notes' Ideas item): three CONVEX true clusters of unequal
+      sizes (one big disk + two small ears, mickey-style); k-means (random-label init,
+      best of 10 restarts by L) still mis-assigns edge points of the big disk to the ear
+      means, because its regions can only be Voronoi cells. Counts computed against true
+      labels under the best cluster<->label matching (k=3: all 6 permutations).
+  -->
+
+  <!-- applet-SPECIFIC styles only -->
+  <style>
+    body { font-family: system-ui, -apple-system, Arial, sans-serif; margin: 24px; color: #222; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    .lead { color: #555; max-width: 88ch; line-height: 1.45; margin-top: 4px; }
+
+    .controls { text-align: center; margin: 8px 0 6px; }
+    .tab { padding: 8px 15px; font-size: 14px; margin: 0 3px; cursor: pointer;
+           background: #f0f0f0; border: 1px solid #bbb; border-radius: 6px; }
+    .tab.on { background: #0072BD; border-color: #0072BD; color: #fff; }
+    .gbtn { padding: 8px 13px; font-size: 13.5px; margin: 0 3px; cursor: pointer;
+            background: #f0f0f0; border: 1px solid #bbb; border-radius: 6px; }
+    .rbtn { padding: 7px 13px; font-size: 13.5px; margin-left: 10px; cursor: pointer;
+            background: #f7f7f7; border: 1.5px solid #6A3D9A; color: #6A3D9A; border-radius: 6px; font-weight: 600; }
+    .rbtn.on { background: #6A3D9A; color: #fff; }
+    #lamWrap { margin-left: 12px; }
+
+    #focal { text-align: center; font-size: 20px; min-height: 64px; margin: 8px 0 6px; color: #111; }
+    #focal .stepno { display: block; font-size: 12.5px; color: #888; margin-bottom: 4px; }
+    #focal .verdict-in { color: #009E73; font-weight: 700; }
+    #focal .verdict-out { color: #CC3311; font-weight: 700; }
+
+    .wrap { display: flex; flex-wrap: wrap; gap: 26px; align-items: flex-start; justify-content: center; }
+    .panel { position: relative; }
+    .panel h3 { font-size: 14.5px; margin: 0 0 4px; color: #333; font-weight: 600; text-align: center; }
+    .caption { font-size: 12px; color: #888; max-width: 64ch; margin: 3px auto 0; text-align: center; }
+    svg { overflow: visible; }
+    .frame { fill: none; stroke: #ccc; }
+
+    /* gallery */
+    #gal { text-align: center; max-width: 340px; }
+    #gal .gtitle { font-size: 12.5px; color: #555; font-weight: 600; margin: 8px 0 2px; }
+    .thumb { display: inline-block; margin: 3px; padding: 4px; border: 1.5px solid #ccc;
+             border-radius: 8px; cursor: pointer; background: #fff; }
+    .thumb.on { border-color: #0072BD; background: #eef4fb; }
+    .thumb svg path { fill: #ddd; stroke: #555; stroke-width: 1.2; }
+
+    /* main canvas */
+    .shape { fill: #E8EEF6; stroke: #555; stroke-width: 1.8; }
+    .chordseg { stroke-width: 3.2; fill: none; }
+    .xydot { stroke: #fff; stroke-width: 1.6; cursor: grab; }
+    .xylab { position: absolute; font-size: 15px; font-weight: 700; pointer-events: none;
+             transform: translate(-50%, -50%); }
+    .lamdot { fill: #111; stroke: #fff; stroke-width: 1.6; pointer-events: none; }
+    .cellpoly { stroke: #999; stroke-width: 1; }
+    .mu { stroke: #111; stroke-width: 2; cursor: grab; }
+    .hp { stroke: none; }
+    .bisector { stroke: #6A3D9A; stroke-width: 1.4; stroke-dasharray: 5 4; }
+    .mmdot { stroke: #fff; stroke-width: 0.6; }
+    .truering { fill: none; stroke: #333; stroke-width: 1.1; }
+    .misring { fill: none; stroke: #CC3311; stroke-width: 1.8; }
+    #footnote { text-align: center; font-size: 13px; color: #777; max-width: 88ch; margin: 14px auto 0; }
+  </style>
+
+  <!-- MathJax v3 (config BEFORE the library). NOTE: MathJax's color package has NO 'HTML'
+       model — use \textcolor[RGB]{r,g,b}. -->
+  <script>
+    window.MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], packages: { '[+]': ['color'] } },
+      svg: { fontCache: 'global' }
+    };
+  </script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js"></script>
+  <script src="https://d3js.org/d3.v7.js"></script>
+
+  <script>
+  // ---- DATA (swap here) -----------------------------------------------------
+  // Shapes in unit-ish coordinates, all CLOSED polygons (circle etc. finely sampled).
+  function poly(fn, n) { return d3.range(n).map(i => fn(2 * Math.PI * i / n)); }
+  const SHAPES = {
+    circle:    { name: 'circle',    convex: true,  pts: poly(a => [Math.cos(a), Math.sin(a)], 48) },
+    square:    { name: 'square',    convex: true,  pts: [[-0.85, -0.85], [0.85, -0.85], [0.85, 0.85], [-0.85, 0.85]] },
+    triangle:  { name: 'triangle',  convex: true,  pts: [[-0.95, -0.75], [0.95, -0.75], [0, 0.9]] },
+    hexagon:   { name: 'hexagon',   convex: true,  pts: poly(a => [0.95 * Math.cos(a), 0.95 * Math.sin(a)], 6) },
+    trapezoid: { name: 'trapezoid', convex: true,  pts: [[-1, -0.6], [1, -0.6], [0.55, 0.6], [-0.55, 0.6]] },
+    crescent:  { name: 'crescent',  convex: false,
+      pts: d3.range(25).map(i => { const a = -Math.PI / 2 + Math.PI * i / 24; return [Math.cos(a) - 0.15, Math.sin(a)]; })
+        .concat(d3.range(25).map(i => { const a = Math.PI / 2 - Math.PI * i / 24; return [0.62 * Math.cos(a) + 0.28, 0.72 * Math.sin(a)]; })) },
+    star:      { name: 'star',      convex: false,
+      pts: d3.range(10).map(i => { const a = Math.PI / 2 + Math.PI * i / 5;
+        const r = i % 2 === 0 ? 1 : 0.42; return [r * Math.cos(a), r * Math.sin(a)]; }) },
+    horseshoe: { name: 'horseshoe', convex: false,
+      pts: d3.range(19).map(i => { const a = Math.PI - Math.PI * i / 18 * 2 + Math.PI; return [Math.cos(Math.PI - Math.PI * i / 18), Math.sin(Math.PI - Math.PI * i / 18)]; })
+        .concat(d3.range(19).map(i => { const a = 0 + Math.PI * i / 18; return [0.5 * Math.cos(a), 0.5 * Math.sin(a)]; })) },
+    dent:      { name: 'dented polygon', convex: false,
+      pts: [[-1, -0.7], [-0.05, -0.15], [0.95, -0.7], [0.8, 0.65], [-0.85, 0.65]] },
+    cross:     { name: 'cross',     convex: false,
+      pts: [[-0.3, -1], [0.3, -1], [0.3, -0.3], [1, -0.3], [1, 0.3], [0.3, 0.3], [0.3, 1], [-0.3, 1], [-0.3, 0.3], [-1, 0.3], [-1, -0.3], [-0.3, -0.3]] }
+  };
+  const GAL_ORDER = { convex: ['circle', 'square', 'triangle', 'hexagon', 'trapezoid'],
+                      nonconvex: ['crescent', 'star', 'horseshoe', 'dent', 'cross'] };
+  const KCOL = ['#E69F00', '#0072B2', '#009E73', '#CC79A7'];
+  const INCOL = '#009E73', OUTCOL = '#CC3311';
+
+  // ---------------------------------------------------------------------------
+  function mulberry32(s){return function(){s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+  const hexRGB = h => [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)).join(',');
+  const texc = (hex, s) => `\\textcolor[RGB]{${hexRGB(hex.replace('#', ''))}}{${s}}`;
+  function mjRun(els) {                     // ALL typesets share ONE chain — MathJax v3
+    window.__mjChain = (window.__mjChain || Promise.resolve())   // corrupts on overlaps
+      .then(() => { const live = (els || []).filter(e => e && e.isConnected);
+        if (!live.length || !window.MathJax || !MathJax.typesetPromise) return null;
+        if (MathJax.typesetClear) MathJax.typesetClear();       // full clear: items whose DOM
+        // was removed (d3 .remove()) crash ANY later typeset; rendered math stays rendered
+        return MathJax.typesetPromise(live); })                 // (rebuilt innerHTML leaves
+      // detached nodes in MathJax's registry -> replaceChild-on-null crashes otherwise)
+      .catch(() => {});
+    return window.__mjChain;
+  }
+  let typesetTimer = null;
+  const typesetQueue = new Set();          // accumulate: a burst of calls must typeset ALL
+  function typesetSoon(el) {               // queued elements, not just the last one
+    if (el) typesetQueue.add(el);
+    if (typesetTimer) clearTimeout(typesetTimer);
+    typesetTimer = setTimeout(() => {
+      const els = [...typesetQueue];
+      typesetQueue.clear();
+      mjRun(els);
+    }, 80);
+  }
+  function typesetNow(els) { mjRun((els || []).filter(Boolean)); }
+
+  // ---- anti-flash live math (same fix as kmeans / kfold-cv): double-buffered MathSlot ----
+  // The new TeX is written into a HIDDEN sibling, typeset there, and swapped in only when ready,
+  // so the visible equation never drops back to raw TeX. Unchanged TeX is not re-typeset.
+  function MathSlot(el, tag) {
+    this.a = document.createElement(tag || 'span'); this.b = document.createElement(tag || 'span');
+    MathSlot.hide(this.b); el.append(this.a, this.b);
+    this.showA = true; this.cur = null; this.pending = null; this.timer = null;
+  }
+  // the off-screen buffer stays visibility:hidden (NOT display:none) so MathJax can measure the font and
+  // the live math comes out the same size as the static math around it (see applet-tooling notes)
+  MathSlot.hide = el => { el.style.visibility = 'hidden'; el.style.position = 'absolute'; el.style.left = '0'; el.style.top = '0'; el.style.width = '100%'; el.style.pointerEvents = 'none'; el.setAttribute('aria-hidden', 'true'); };
+  MathSlot.show = el => { el.style.visibility = ''; el.style.position = ''; el.style.left = ''; el.style.top = ''; el.style.width = ''; el.style.pointerEvents = ''; el.removeAttribute('aria-hidden'); };
+  MathSlot.prototype.set = function (tex) {
+    if (tex === this.cur && this.pending == null) return;
+    this.pending = tex;
+    if (this.timer) return;
+    this.timer = setTimeout(() => { this.timer = null; this.flush(); }, 60);
+  };
+  MathSlot.prototype.flush = function () {
+    const tex = this.pending; this.pending = null;
+    if (tex == null || tex === this.cur) return;
+    this.cur = tex;
+    const hidden = this.showA ? this.b : this.a, vis = this.showA ? this.a : this.b;
+    hidden.innerHTML = tex; this.showA = !this.showA;
+    mjRun([hidden]).then(() => { MathSlot.show(hidden); MathSlot.hide(vis); vis.innerHTML = ''; });   // swap, clear the stale buffer
+  };
+  const __slots = new Map();               // host element -> MathSlot (module-level, survives build())
+  function setLive(el, html, tag) {        // replaces `el.innerHTML = html; typeset(el)` for live math
+    if (!el) return;
+    let s = __slots.get(el);
+    if (!s || !s.a.isConnected) { s = new MathSlot(el, tag); __slots.set(el, s); }
+    s.set(html);
+  }
+  function keepLabel(host, key, cls, html) {   // persistent positioned label: created + typeset ONCE,
+    let el = host.select(`.${cls}[data-key="${key}"]`);   // then only re-styled by the caller (no flash)
+    if (el.empty()) {                                      // invisible until its one typeset lands
+      el = host.append('div').attr('class', cls).attr('data-key', key).style('visibility', 'hidden').html(html);
+      const node = el.node(); mjRun([node]).then(() => { node.style.visibility = ''; });
+    }
+    return el;
+  }
+  window.__liveTex = () => Object.fromEntries([...__slots].map(([el, s]) => [el.id || el.className, s.cur]));
+  function inPoly(pt, pts) {                    // ray casting
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const [xi, yi] = pts[i], [xj, yj] = pts[j];
+      if ((yi > pt[1]) !== (yj > pt[1]) &&
+          pt[0] < (xj - xi) * (pt[1] - yi) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+  const lerp = (a, b, l) => [l * a[0] + (1 - l) * b[0], l * a[1] + (1 - l) * b[1]];
+  // clip an axis-aligned box to the half-plane {p : a.p <= c}  (Sutherland-Hodgman)
+  function clipHalf(polyPts, a, c) {
+    const out = [];
+    for (let i = 0; i < polyPts.length; i++) {
+      const P = polyPts[i], Q = polyPts[(i + 1) % polyPts.length];
+      const dP = a[0] * P[0] + a[1] * P[1] - c, dQ = a[0] * Q[0] + a[1] * Q[1] - c;
+      if (dP <= 0) out.push(P);
+      if ((dP < 0 && dQ > 0) || (dP > 0 && dQ < 0)) {
+        const t = dP / (dP - dQ);
+        out.push([P[0] + t * (Q[0] - P[0]), P[1] + t * (Q[1] - P[1])]);
+      }
+    }
+    return out;
+  }
+
+  // ============================ state ========================================
+  const S = { tab: 'shape', shape: 'circle', X: [-0.45, -0.25], Y: [0.5, 0.35], lam: 0.5,
+              mus: [[-0.9, 0.55], [0.75, 0.7], [0.1, -0.75], [0.95, -0.35]],
+              reveal: false, mickey: null, mickeySeed: 0 };
+  let UI = null;
+
+  // ---- tab 2 helpers ----
+  const nearestMu = p => { let b = 0, bd = Infinity;
+    S.mus.forEach((m, c) => { const dd = (p[0] - m[0]) ** 2 + (p[1] - m[1]) ** 2;
+      if (dd < bd) { bd = dd; b = c; } }); return b; };
+
+  // ---- tab 3: mickey data + k-means (best of 10 random-label restarts) ----
+  function mickey() {
+    if (S.mickey) return S.mickey;
+    const rng = mulberry32(42 + 977 * S.mickeySeed);
+    const disk = (cx, cy, r, n2, lab) => d3.range(n2).map(() => {
+      const a = 2 * Math.PI * rng(), rr = r * Math.sqrt(rng());
+      return [cx + rr * Math.cos(a), cy + rr * Math.sin(a), lab];
+    });
+    const pts = disk(0, -0.15, 0.72, 150, 0).concat(disk(-0.62, 0.62, 0.22, 25, 1), disk(0.62, 0.62, 0.22, 25, 2));
+    // best-of-10 Lloyd with random-label init
+    let best = null;
+    for (let r = 0; r < 10; r++) {
+      let assign = pts.map(() => Math.floor(rng() * 3)), mus = null;
+      for (let it = 0; it < 100; it++) {
+        const sum = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+        pts.forEach((p, i) => { const c = assign[i]; sum[c][0] += p[0]; sum[c][1] += p[1]; sum[c][2]++; });
+        mus = sum.map((v, c) => v[2] ? [v[0] / v[2], v[1] / v[2]] : (mus ? mus[c] : [0, 0]));
+        const next = pts.map(p => { let b = 0, bd = Infinity;
+          mus.forEach((m, c) => { const dd = (p[0] - m[0]) ** 2 + (p[1] - m[1]) ** 2;
+            if (dd < bd) { bd = dd; b = c; } }); return b; });
+        if (next.every((c, i) => c === assign[i])) break;
+        assign = next;
+      }
+      const L = pts.reduce((s, p, i) => s + (p[0] - mus[assign[i]][0]) ** 2 + (p[1] - mus[assign[i]][1]) ** 2, 0);
+      if (!best || L < best.L) best = { assign, mus, L };
+    }
+    // best matching of cluster ids to true labels (all 6 permutations)
+    const perms = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+    let bestPerm = null;
+    for (const pm of perms) {
+      const good = pts.reduce((s, p, i) => s + (pm[best.assign[i]] === p[2] ? 1 : 0), 0);
+      if (!bestPerm || good > bestPerm.good) bestPerm = { pm, good };
+    }
+    S.mickey = { pts, assign: best.assign, mus: best.mus, L: best.L,
+                 matched: bestPerm.good, mis: pts.length - bestPerm.good, perm: bestPerm.pm };
+    return S.mickey;
+  }
+
+  // ============================ build ========================================
+  const W = 460, H = 430, PM = { top: 10, right: 12, bottom: 14, left: 12 };
+  const sx = d3.scaleLinear([-1.35, 1.35], [0, W]);
+  const sy = d3.scaleLinear([-1.35, 1.35], [H, 0]);
+  const toPx = p => [sx(p[0]), sy(p[1])];
+  const fromPx = p => [sx.invert(p[0]), sy.invert(p[1])];
+
+  function build() {
+    for (const t of ['shape', 'cells', 'catch'])
+      d3.select('#tab_' + t).classed('on', S.tab === t);
+    d3.select('#gal').style('display', S.tab === 'shape' ? null : 'none');
+    d3.select('#btnWitness').style('display', S.tab === 'shape' ? null : 'none');
+    d3.select('#btnReveal').style('display', S.tab === 'cells' ? null : 'none');
+    d3.select('#btnRedraw').style('display', S.tab === 'catch' ? null : 'none');
+    d3.select('#lamWrap').style('display', S.tab === 'catch' ? 'none' : null);
+
+    document.getElementById('canvasTitle').textContent =
+      S.tab === 'shape' ? 'the chord test' :
+      S.tab === 'cells' ? 'the learned regions — drag the means, drag x and y' :
+      'three convex clusters vs one K-means';
+    d3.select('#canvasBody').selectAll('*').remove();
+    const root = d3.select('#canvasBody').append('svg')
+      .attr('width', W + PM.left + PM.right).attr('height', H + PM.top + PM.bottom);
+    const svg = root.append('g').attr('transform', `translate(${PM.left},${PM.top})`);
+    UI = { svg, div: d3.select('#canvasBody') };
+    UI.gHP = svg.append('g');        // half-planes (tab 2)
+    UI.gShape = svg.append('g');     // shape / cells / mickey points
+    UI.gChord = svg.append('g');
+    UI.gTop = svg.append('g');       // draggable dots, means
+    svg.append('rect').attr('class', 'frame').attr('width', W).attr('height', H);
+    renderAll();
+    typesetNow([document.getElementById('defline'), document.getElementById('lead')]);
+  }
+
+  // ============================ render ========================================
+  function renderAll() {
+    UI.gHP.selectAll('*').remove();
+    UI.gShape.selectAll('*').remove();
+    UI.gChord.selectAll('*').remove();
+    UI.gTop.selectAll('*').remove();
+    if (S.tab === 'catch') UI.div.selectAll('.xylab').remove();   // x/y labels persist (typeset once) on the other tabs
+    if (S.tab === 'shape') renderShapeTab();
+    else if (S.tab === 'cells') renderCellsTab();
+    else renderCatchTab();
+    window.__cvxApi = {
+      state: () => ({ tab: S.tab, shape: S.shape, X: S.X.slice(), Y: S.Y.slice(), lam: S.lam,
+        mus: S.mus.map(m => m.slice()), reveal: S.reveal,
+        mickey: S.tab === 'catch' ? { mis: mickey().mis, n: mickey().pts.length, L: mickey().L } : null }),
+      setTab: t => { S.tab = t; build(); },
+      setShape: k => { S.shape = k; placeInside(); renderAll(); },
+      setXY: (X2, Y2) => { S.X = X2; S.Y = Y2; renderAll(); },
+      setLam: l => { S.lam = l; document.getElementById('lam').value = l; renderAll(); },
+      setMu: (i, m) => { S.mus[i] = m; renderAll(); },
+      reveal: v => { S.reveal = v == null ? !S.reveal : v; renderAll(); },
+      witness: autoWitness,
+      inShape: p => inPoly(p, SHAPES[S.shape].pts),
+      chordCheck: (X2, Y2) => d3.range(81).every(i => inPoly(lerp(X2, Y2, i / 80), SHAPES[S.shape].pts)),
+      nearestMu, mickeyData: () => JSON.parse(JSON.stringify(mickey()))
+    };
+  }
+
+  function dragDot(sel, which) {
+    sel.call(d3.drag().on('start drag', ev => {
+      const p = fromPx([ev.x, ev.y]);
+      if (which === 'X') S.X = p; else S.Y = p;
+      renderAll();
+    }));
+  }
+
+  function placeInside() {              // two interior points of the current shape
+    const sh = SHAPES[S.shape], found = [];
+    outer: for (let gy = 0.85; gy >= -0.9; gy -= 0.12)
+      for (let gx = -0.95; gx <= 0.95; gx += 0.12)
+        if (inPoly([gx, gy], sh.pts)) { found.push([gx, gy]); if (found.length >= 2) break outer; }
+    // spread the second point: last interior point on a coarse reverse scan
+    let second = null;
+    for (let gy = -0.9; gy <= 0.85 && !second; gy += 0.12)
+      for (let gx = 0.95; gx >= -0.95; gx -= 0.12)
+        if (inPoly([gx, gy], sh.pts)) { second = [gx, gy]; break; }
+    if (found[0]) S.X = found[0];
+    if (second) S.Y = second;
+  }
+
+  // ---- tab 1: shapes ----
+  function renderShapeTab() {
+    const sh = SHAPES[S.shape];
+    UI.gShape.append('path').attr('class', 'shape')
+      .attr('d', 'M' + sh.pts.map(p => toPx(p).join(',')).join('L') + 'Z');
+    drawChord(p => inPoly(p, sh.pts) ? INCOL : OUTCOL);
+    drawXY();
+    const inside = d3.range(81).every(i => inPoly(lerp(S.X, S.Y, i / 80), sh.pts));
+    const zin = inPoly(lerp(S.X, S.Y, S.lam), sh.pts);
+    const xin = inPoly(S.X, sh.pts), yin = inPoly(S.Y, sh.pts);
+    renderFocalShape(sh, inside, zin, xin, yin);
+    d3.select('#canvasCap').text(sh.convex
+      ? `${sh.name}: convex — drag x and y anywhere inside; no chord ever leaves`
+      : `${sh.name}: NOT convex — find x, y whose chord leaves the shape (or press “find a counterexample”)`);
+  }
+  function autoWitness() {
+    const sh = SHAPES[S.shape];
+    if (sh.convex) { renderAll(); return null; }
+    const rng = mulberry32(7);
+    for (let tries = 0; tries < 4000; tries++) {
+      const a = [2.6 * rng() - 1.3, 2.6 * rng() - 1.3], b = [2.6 * rng() - 1.3, 2.6 * rng() - 1.3];
+      if (!inPoly(a, sh.pts) || !inPoly(b, sh.pts)) continue;
+      let bad = -1;
+      for (let i = 0; i <= 80; i++) if (!inPoly(lerp(a, b, i / 80), sh.pts)) { bad = i; break; }
+      if (bad >= 0) {
+        S.X = a; S.Y = b; S.lam = bad / 80;
+        document.getElementById('lam').value = S.lam;
+        renderAll();
+        return { X: a, Y: b, lam: bad / 80 };
+      }
+    }
+    return null;
+  }
+
+  // ---- tab 2: k-means cells ----
+  function renderCellsTab() {
+    const sc = 200;
+    const de = d3.Delaunay.from(S.mus.map(m => [m[0] * sc, m[1] * sc]));
+    const vor = de.voronoi([-1.35 * sc, -1.35 * sc, 1.35 * sc, 1.35 * sc]);
+    for (let c = 0; c < S.mus.length; c++) {
+      const cell = vor.cellPolygon(c);
+      if (!cell) continue;
+      UI.gShape.append('path').attr('class', 'cellpoly')
+        .attr('fill', KCOL[c]).attr('fill-opacity', 0.13)
+        .attr('d', 'M' + cell.map(p => toPx([p[0] / sc, p[1] / sc]).join(',')).join('L') + 'Z');
+    }
+    const kSel = nearestMu(S.X);
+    // reveal: each competitor j contributes the half-plane 2x^T(mu_j - mu_k) <= |mu_j|^2 - |mu_k|^2
+    if (S.reveal) {
+      const box = [[-1.35, -1.35], [1.35, -1.35], [1.35, 1.35], [-1.35, 1.35]];
+      const mk = S.mus[kSel];
+      S.mus.forEach((mj, j) => {
+        if (j === kSel) return;
+        const a = [2 * (mj[0] - mk[0]), 2 * (mj[1] - mk[1])];
+        const c = mj[0] ** 2 + mj[1] ** 2 - (mk[0] ** 2 + mk[1] ** 2);
+        const hp = clipHalf(box, a, c);
+        if (hp.length >= 3)
+          UI.gHP.append('path').attr('class', 'hp').attr('fill', KCOL[kSel]).attr('fill-opacity', 0.12)
+            .attr('d', 'M' + hp.map(p => toPx(p).join(',')).join('L') + 'Z');
+        // the bisector line itself
+        const mid = [(mj[0] + mk[0]) / 2, (mj[1] + mk[1]) / 2];
+        const dir = [-(mj[1] - mk[1]), mj[0] - mk[0]];
+        const nrm = Math.hypot(dir[0], dir[1]) || 1;
+        const p1 = [mid[0] + 4 * dir[0] / nrm, mid[1] + 4 * dir[1] / nrm];
+        const p2 = [mid[0] - 4 * dir[0] / nrm, mid[1] - 4 * dir[1] / nrm];
+        UI.gHP.append('line').attr('class', 'bisector')
+          .attr('x1', toPx(p1)[0]).attr('y1', toPx(p1)[1])
+          .attr('x2', toPx(p2)[0]).attr('y2', toPx(p2)[1]);
+      });
+    }
+    drawChord(p => KCOL[nearestMu(p)]);
+    // means (draggable)
+    S.mus.forEach((m, c) => {
+      const g = UI.gTop.append('path').attr('class', 'mu').attr('fill', KCOL[c])
+        .attr('transform', `translate(${toPx(m).join(',')})`)
+        .attr('d', d3.symbol().type(d3.symbolCross).size(240)());
+      g.call(d3.drag().on('start drag', ev => { S.mus[c] = fromPx([ev.x, ev.y]); renderAll(); }));
+    });
+    drawXY();
+    const cellX = nearestMu(S.X), cellY = nearestMu(S.Y);
+    const allSame = cellX === cellY &&
+      d3.range(81).every(i => nearestMu(lerp(S.X, S.Y, i / 80)) === cellX);
+    renderFocalCells(cellX, cellY, allSame, kSel);
+    d3.select('#canvasCap').text('drag the ✚ means to reshape the cells; drag x and y — inside one cell, the chord can never escape' +
+      (S.reveal ? ` — shaded: the ${S.mus.length - 1} half-planes whose intersection IS cell ${kSel + 1}` : ''));
+  }
+
+  // ---- tab 3: the catch ----
+  function renderCatchTab() {
+    const M = mickey();
+    // true clusters as outline circles
+    const rings = [[0, -0.15, 0.72], [-0.62, 0.62, 0.22], [0.62, 0.62, 0.22]];
+    for (const [cx, cy, r] of rings)
+      UI.gShape.append('circle').attr('class', 'truering')
+        .attr('cx', sx(cx)).attr('cy', sy(cy)).attr('r', Math.abs(sx(r) - sx(0)))
+        .attr('stroke-dasharray', '5 4');
+    // voronoi of the learned means
+    const sc = 200;
+    const de = d3.Delaunay.from(M.mus.map(m => [m[0] * sc, m[1] * sc]));
+    const vor = de.voronoi([-1.35 * sc, -1.35 * sc, 1.35 * sc, 1.35 * sc]);
+    for (let c = 0; c < 3; c++) {
+      const cell = vor.cellPolygon(c);
+      if (!cell) continue;
+      UI.gShape.append('path').attr('class', 'cellpoly')
+        .attr('fill', KCOL[c]).attr('fill-opacity', 0.12)
+        .attr('d', 'M' + cell.map(p => toPx([p[0] / sc, p[1] / sc]).join(',')).join('L') + 'Z');
+    }
+    M.pts.forEach((p, i) => {
+      UI.gShape.append('circle').attr('class', 'mmdot').attr('r', 3.2)
+        .attr('cx', sx(p[0])).attr('cy', sy(p[1])).attr('fill', KCOL[M.assign[i]]);
+      if (M.perm[M.assign[i]] !== p[2])
+        UI.gShape.append('circle').attr('class', 'misring').attr('r', 5.5)
+          .attr('cx', sx(p[0])).attr('cy', sy(p[1]));
+    });
+    M.mus.forEach((m, c) => UI.gTop.append('path').attr('class', 'mu').attr('fill', KCOL[c])
+      .attr('transform', `translate(${toPx(m).join(',')})`)
+      .attr('d', d3.symbol().type(d3.symbolCross).size(240)()).style('cursor', 'default'));
+    setLive(document.getElementById('focal'), `<span class="stepno">three TRUE clusters (dashed circles) — every one of them convex — but with very different sizes</span>` +
+      `k-means (best of 10 restarts) still puts ` +
+      `<span class="verdict-out">${M.mis} of ${M.pts.length} points</span> in the wrong cell: ` +
+      `its regions can only be Voronoi cells, and the big disk's edge lies closer to the ear means.`);
+    d3.select('#canvasCap').text('red rings = points whose k-means cell disagrees with their true cluster — the failure is at the head/ear boundary, exactly where the bisectors cut into the big disk');
+  }
+
+  // ---- shared drawing ----
+  function drawChord(colorAt) {
+    const NSEG = 80;
+    for (let i = 0; i < NSEG; i++) {
+      const a = lerp(S.X, S.Y, i / NSEG), b = lerp(S.X, S.Y, (i + 1) / NSEG);
+      UI.gChord.append('line').attr('class', 'chordseg')
+        .attr('stroke', colorAt(lerp(S.X, S.Y, (i + 0.5) / NSEG)))
+        .attr('x1', toPx(a)[0]).attr('y1', toPx(a)[1])
+        .attr('x2', toPx(b)[0]).attr('y2', toPx(b)[1]);
+    }
+    const z = lerp(S.X, S.Y, S.lam);
+    UI.gChord.append('circle').attr('class', 'lamdot').attr('r', 6)
+      .attr('cx', toPx(z)[0]).attr('cy', toPx(z)[1]);
+  }
+  function drawXY() {
+    for (const [which, p, col] of [['X', S.X, '#111'], ['Y', S.Y, '#111']]) {
+      const dot = UI.gTop.append('circle').attr('class', 'xydot').attr('r', 7.5)
+        .attr('fill', col).attr('cx', toPx(p)[0]).attr('cy', toPx(p)[1]);
+      dragDot(dot, which);
+      keepLabel(UI.div, which, 'xylab', which === 'X' ? '\\(\\mathbf{x}\\)' : '\\(\\mathbf{y}\\)').style('color', '#111')
+        .style('left', (PM.left + toPx(p)[0] + (which === 'X' ? -14 : 14)) + 'px')
+        .style('top', (PM.top + toPx(p)[1] - 14) + 'px');
+    }
+  }
+
+  // ---- focal builders ----
+  const fmt2 = v => (Math.round(v * 100) / 100).toFixed(2);
+  function renderFocalShape(sh, allIn, zin, xin, yin) {
+    const f = { set innerHTML(v) { setLive(document.getElementById('focal'), v); } };
+    const z = lerp(S.X, S.Y, S.lam);
+    const warn = (!xin || !yin) ? `<span class="stepno" style="color:#CC3311">move x and y INSIDE the shape first — the definition quantifies over points of S</span>` : '';
+    f.innerHTML = warn || (`<span class="stepno">${sh.name}, λ = ${S.lam.toFixed(2)} — slide λ to walk the chord</span>` +
+      `\\(\\lambda\\mathbf{x} + (1-\\lambda)\\mathbf{y} = [${fmt2(z[0])},\\ ${fmt2(z[1])}]\\)` +
+      (zin ? ` <span class="verdict-in">∈ S</span>` : ` <span class="verdict-out">∉ S — counterexample! S is not convex</span>`) +
+      `<span class="stepno" style="margin-top:3px">${allIn
+        ? 'this whole chord stays inside — keep hunting' + (sh.convex ? ' (you never will: ' + sh.name + ' is convex)' : '')
+        : 'the chord leaves S: these x, y, λ witness non-convexity'}</span>`);
+  }
+  function renderFocalCells(cx, cy, allSame, kSel) {
+    const f = { set innerHTML(v) { setLive(document.getElementById('focal'), v); } };
+    const mk = S.mus[kSel], z = lerp(S.X, S.Y, S.lam);
+    // live linear inequality vs the nearest competitor
+    let jStar = -1, margin = Infinity;
+    S.mus.forEach((mj, j) => { if (j === kSel) return;
+      const lhs = 2 * (S.X[0] * (mj[0] - mk[0]) + S.X[1] * (mj[1] - mk[1]));
+      const rhs = mj[0] ** 2 + mj[1] ** 2 - mk[0] ** 2 - mk[1] ** 2;
+      if (rhs - lhs < margin) { margin = rhs - lhs; jStar = j; } });
+    const mj = S.mus[jStar];
+    const lhs = 2 * (S.X[0] * (mj[0] - mk[0]) + S.X[1] * (mj[1] - mk[1]));
+    const rhs = mj[0] ** 2 + mj[1] ** 2 - mk[0] ** 2 - mk[1] ** 2;
+    f.innerHTML = `<span class="stepno">x lives in cell ${kSel + 1}; its tightest competitor is \\(\\boldsymbol{\\mu}_{${jStar + 1}}\\) — the membership condition is LINEAR in x:</span>` +
+      `\\(2\\mathbf{x}^{T}(${texc(KCOL[jStar], `\\boldsymbol{\\mu}_{${jStar + 1}}`)} - ${texc(KCOL[kSel], `\\boldsymbol{\\mu}_{${kSel + 1}}`)}) = ${fmt2(lhs)} \\;\\le\\; ` +
+      `\\|${texc(KCOL[jStar], `\\boldsymbol{\\mu}_{${jStar + 1}}`)}\\|^2 - \\|${texc(KCOL[kSel], `\\boldsymbol{\\mu}_{${kSel + 1}}`)}\\|^2 = ${fmt2(rhs)}\\)` +
+      `<span class="stepno" style="margin-top:3px">${cx === cy
+        ? (allSame ? `x and y share cell ${cx + 1}, and the whole chord stays in it — linear inequalities survive convex combinations`
+                   : 'unexpected: chord left the cell (this should be impossible)')
+        : `x is in cell ${cx + 1} but y is in cell ${cy + 1} — the definition only tests pairs INSIDE one set`}</span>`;
+  }
+
+  // ============================ boot ==========================================
+  function main() {
+    if (main.done) return; main.done = true;
+    document.getElementById('defline').innerHTML =
+      `\\(S\\) is <b>convex</b> \\(\\iff \\forall\\, \\mathbf{x}, \\mathbf{y} \\in S\\) and \\(\\forall\\, \\lambda \\in (0,1):\\;` +
+      `\\underbrace{\\lambda\\mathbf{x} + (1-\\lambda)\\mathbf{y}}_{\\text{a convex combination}} \\in S\\)`;
+    // gallery thumbnails (the notes' two rows, clickable)
+    for (const row of ['convex', 'nonconvex']) {
+      const holder = d3.select(row === 'convex' ? '#galConvex' : '#galNon');
+      for (const key of GAL_ORDER[row]) {
+        const t = holder.append('span').attr('class', 'thumb').attr('id', 'th_' + key)
+          .on('click', () => { S.shape = key; placeInside(); renderAll();
+            d3.selectAll('.thumb').classed('on', false); d3.select('#th_' + key).classed('on', true); });
+        const tsvg = t.append('svg').attr('width', 46).attr('height', 46);
+        const txs = d3.scaleLinear([-1.35, 1.35], [2, 44]), tys = d3.scaleLinear([-1.35, 1.35], [44, 2]);
+        tsvg.append('path').attr('d', 'M' + SHAPES[key].pts.map(p => [txs(p[0]), tys(p[1])].join(',')).join('L') + 'Z');
+      }
+    }
+    d3.select('#th_circle').classed('on', true);
+    for (const t of ['shape', 'cells', 'catch'])
+      d3.select('#tab_' + t).on('click', () => { S.tab = t; build(); });
+    d3.select('#lam').on('input', function () { S.lam = +this.value; renderAll(); });
+    d3.select('#btnWitness').on('click', autoWitness);
+    d3.select('#btnReveal').on('click', () => { S.reveal = !S.reveal; d3.select('#btnReveal').classed('on', S.reveal); renderAll(); });
+    d3.select('#btnRedraw').on('click', () => { S.mickeySeed++; S.mickey = null; renderAll(); });
+    build();
+  }
+  window.addEventListener('load', main);
+  </script>
+</head>
+<body>
+  <h1>Convex sets in general and its relation to K-means</h1>
+  <p class="lead" id="lead">A set is convex when the line segment between any two of its points never
+    leaves it. That single sentence decides what K-means can and cannot learn: each cell
+    \(S_k = \{\mathbf{x} : \|\mathbf{x} - \boldsymbol{\mu}_k\| \le \|\mathbf{x} - \boldsymbol{\mu}_j\| \; \forall j\}\) turns out to be an
+    intersection of half-planes — automatically convex — so K-means can never carve out a crescent,
+    a ring, or a spiral.</p>
+
+  <div class="controls">
+    <button id="tab_shape" class="tab on">1 · Convex or not? (the chord test)</button>
+    <button id="tab_cells" class="tab">2 · K-means cells are convex (the proof)</button>
+    <!-- tab 3 hidden (LL, 2026-11): <button id="tab_catch" class="tab">3 · The catch: convex isn't enough</button> -->
+    <span id="lamWrap">\(\lambda\): <input id="lam" class="slider" type="range" min="0" max="1" step="0.01" value="0.5" style="width:130px"></span>
+    <button id="btnWitness" class="gbtn">Find a counterexample</button>
+    <!-- half-planes hidden (LL, 2026-11): <button id="btnReveal" class="rbtn">Reveal the half-planes</button> -->
+    <!-- belongs to the hidden tab 3: <button id="btnRedraw" class="gbtn" style="display:none">Re-run K-means</button> -->
+  </div>
+
+  <div id="defline" style="text-align:center; font-size:17px; min-height:34px; margin:6px 0 0;"></div>
+  <div id="focal"></div>
+
+  <div class="wrap">
+    <div id="gal" class="panel">
+      <h3>the shapes from lecture</h3>
+      <div class="gtitle">convex</div><div id="galConvex"></div>
+      <div class="gtitle">non-convex</div><div id="galNon"></div>
+      <div class="caption">click a shape, then drag \(\mathbf{x}\) and \(\mathbf{y}\) on the canvas</div>
+    </div>
+    <div class="panel">
+      <h3 id="canvasTitle">the chord test</h3>
+      <div id="canvasBody" class="panel"></div>
+      <div id="canvasCap" class="caption"></div>
+    </div>
+  </div>
+
+  <!-- <p id="footnote">The proof in tab 2 is the lecture's multiply-and-combine trick:
+    \(\|\mathbf{x}-\boldsymbol{\mu}_k\|^2 \le \|\mathbf{x}-\boldsymbol{\mu}_j\|^2\) rearranges to
+    \(2\mathbf{x}^{T}(\boldsymbol{\mu}_j-\boldsymbol{\mu}_k) \le \|\boldsymbol{\mu}_j\|^2 - \|\boldsymbol{\mu}_k\|^2\), which is <b>linear</b> in \(\mathbf{x}\) —
+    and if \(\mathbf{x}\) and \(\mathbf{y}\) each satisfy a linear inequality, so does \(\lambda\mathbf{x}+(1-\lambda)\mathbf{y}\)
+    (multiply by \(\lambda\) and \(1-\lambda\), add). One such inequality per competitor \(j\):
+    the cell is the intersection of \(K-1\) half-planes. Tab 3 is the flip side: convex regions are a
+    straitjacket — three perfectly convex clusters of unequal size still defeat K-means, because the
+    bisector between a big cluster's mean and a small one's cuts through the big cluster.</p> -->
+</body>
+</html>
