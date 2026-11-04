@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hierarchical Clustering: Fuse, Fuse, Fuse</title>
+  <link rel="stylesheet" href="../styling/global.css">
+
+  <!--
+    SOURCES (kept in source; not displayed in the applet UI)
+    - Entirely hand-placed toy data, per the lecture notes' instruction "pick distances so
+      that they are easy to see". Tab 1: 9 labelled points in 3 groups of 3, spaced so the
+      dendrogram shows both the 3-cluster and 2-cluster stories. Tab 2 datasets mirror the
+      notes' tikz sketches: two blobs + far outlier; a chain + a blob; two blobs bridged by
+      one point; one elongated cluster; and a near-equilateral triangle for the centroid
+      INVERSION (fuse two points at h1 = 1, the merged centroid then sits sqrt(3)/2 < 1
+      from the third point, so h2 < h1 — a non-monotone dendrogram step, drawn in red).
+    - Agglomerative clustering is exact and naive (n <= 12): at each step all cluster pairs
+      are compared with the selected linkage (complete = max pairwise, single = min,
+      average = mean, centroid = distance of means) and the argmin pair fuses; ties break
+      by scan order. Heights = fusion dissimilarities.
+    - Cuts are implemented as "state after n - k merges", which stays well-defined even
+      when centroid linkage inverts.
+    - Verdict captions in tab 2 state only behaviors the test drive verifies numerically.
+    - "Real data" tab: Palmer penguins (Gorman, Williams & Fraser 2014, PLoS ONE 9(3):e90081;
+      R package palmerpenguins, Horst, Hill & Gorman 2020, CC0), from datasets/penguins.csv:
+      all 342 birds with both bill length and bill depth. Features z-scored (population sd),
+      Euclidean distance. Trees use the Lance-Williams update (centroid on squared distances,
+      heights = sqrt); complete/average use a port of scipy's nearest-neighbor chain so ties
+      break as in scipy (bills are measured to 0.1 mm, so many distances tie exactly). Checked
+      against scipy.cluster.hierarchy.linkage: identical k-cuts for k = 2..8 for all four
+      linkages, identical merge heights given identical z-scores (complete's low-level heights
+      move with 1e-15 rounding of the z-scores; its k <= 8 cuts do not). At k = 3 (verified): single
+      puts 340 of 342 birds in one cluster; complete splits the Chinstraps (27 of 68 land in
+      the Adelie cluster) and agrees with species on 88%; average 94%, centroid 95%;
+      centroid's tree has 10 inversions. "Agrees with species" = share of birds whose cluster
+      is greedily matched to their species (largest overlaps first, one cluster per species).
+      Colors: a cluster gets a species' color only if that species is most of the cluster and
+      the cluster holds >= 20% of the species.
+  -->
+
+  <!-- applet-SPECIFIC styles only -->
+  <style>
+    body { font-family: system-ui, -apple-system, Arial, sans-serif; margin: 24px; color: #222; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    .lead { color: #555; max-width: 88ch; line-height: 1.45; margin-top: 4px; }
+
+    .controls { text-align: center; margin: 8px 0 6px; }
+    .tab { padding: 8px 15px; font-size: 14px; margin: 0 3px; cursor: pointer;
+           background: #f0f0f0; border: 1px solid #bbb; border-radius: 6px; }
+    .tab.on { background: #0072BD; border-color: #0072BD; color: #fff; }
+    .lbtn { padding: 7px 12px; font-size: 13px; margin: 0 2px; cursor: pointer;
+            background: #f0f0f0; border: 1px solid #bbb; border-radius: 6px; }
+    .lbtn.on { background: #555; border-color: #555; color: #fff; }
+    .abtn { padding: 9px 20px; font-size: 15px; margin: 0 4px 0 14px; cursor: pointer;
+            background: #D55E00; border: 1px solid #D55E00; border-radius: 6px; color: #fff; font-weight: 600; }
+    .abtn:disabled { background: #e9c4ad; border-color: #e9c4ad; cursor: default; }
+    .gbtn { padding: 9px 13px; font-size: 14px; margin: 0 3px; cursor: pointer;
+            background: #f0f0f0; border: 1px solid #bbb; border-radius: 6px; }
+    .dbtn { padding: 7px 12px; font-size: 13px; margin: 0 2px; cursor: pointer;
+            background: #f0f0f0; border: 1px solid #bbb; border-radius: 6px; }
+    .dbtn.on { background: #009E73; border-color: #009E73; color: #fff; }
+    .kbtn { padding: 6px 11px; font-size: 13px; margin: 0 2px; cursor: pointer;
+            background: #f0f0f0; border: 1px solid #bbb; border-radius: 6px; }
+    .kbtn.on { background: #6A3D9A; border-color: #6A3D9A; color: #fff; }
+
+    #focal { text-align: center; font-size: 19px; min-height: 66px; margin: 8px 0 6px; color: #111; }
+    #focal .stepno { display: block; font-size: 12.5px; color: #888; margin-bottom: 4px; }
+
+    .wrap { display: flex; flex-wrap: wrap; gap: 26px; align-items: flex-start; justify-content: center; }
+    .panel { position: relative; }
+    .panel h3 { font-size: 14.5px; margin: 0 0 4px; color: #333; font-weight: 600; text-align: center; }
+    .caption { font-size: 12px; color: #888; max-width: 66ch; margin: 3px auto 0; text-align: center; }
+    svg { overflow: visible; }
+    .frame { fill: none; stroke: #ccc; }
+    .tick text { font-size: 10.5px; }
+    .axislab { position: absolute; font-size: 12.5px; color: #444; pointer-events: none; white-space: nowrap; }
+
+    /* scatter */
+    .hpt { stroke: #fff; stroke-width: 1; }
+    .hlab { position: absolute; transform: translate(-50%, -50%); font-size: 11px; font-weight: 700;
+            pointer-events: none; color: #333; }
+    .fuselink { stroke: #D55E00; stroke-width: 2.4; stroke-dasharray: 6 4; }
+    .fusedist { position: absolute; transform: translate(-50%, -100%); font-size: 12.5px; font-weight: 700;
+                color: #D55E00; background: rgba(255,255,255,.9); padding: 0 4px; border-radius: 3px;
+                pointer-events: none; }
+    .hull { fill-opacity: 0.14; stroke-width: 1.4; stroke-opacity: 0.7; }
+
+    /* dendrogram */
+    .dbr { fill: none; stroke: #555; stroke-width: 1.8; }
+    .dbr.fresh { stroke: #D55E00; stroke-width: 2.6; }
+    .dbr.invert { stroke: #CC3311; stroke-width: 2.6; }
+    .dleaf { position: absolute; transform: translate(-50%, 0); font-size: 11px; font-weight: 700;
+             pointer-events: none; }
+    .cutline { stroke: #6A3D9A; stroke-width: 2; stroke-dasharray: 7 4; cursor: ns-resize; }
+    .cutgrab { stroke: transparent; stroke-width: 16; cursor: ns-resize; }
+    .invtag { position: absolute; font-size: 11px; font-weight: 700; color: #CC3311;
+              pointer-events: none; white-space: nowrap; }
+
+    /* matrix */
+    #mat { border-collapse: collapse; font-size: 11.5px; margin: 4px auto 0; }
+    #mat th, #mat td { padding: 2px 6px; text-align: center; border: 1px solid #eee; }
+    #mat th { font-weight: 700; }
+    #mat td.min { background: #fff6ee; box-shadow: inset 0 0 0 2px #D55E00; font-weight: 700; }
+    #mat td.dead { color: #ccc; }
+
+    /* tab 2 small multiples */
+    .mini h4 { font-size: 12.5px; margin: 0 0 2px; text-align: center; color: #333; }
+    .mini h4 .win { color: #009E73; } .mini h4 .lose { color: #CC3311; }
+    .mini { cursor: pointer; padding: 4px; border: 2px solid transparent; border-radius: 8px; position: relative; }
+    .mini.on { border-color: #0072BD; background: #f6faff; }
+    #verdict { text-align: center; font-size: 14px; color: #333; max-width: 90ch; margin: 8px auto 0;
+               min-height: 40px; }
+    /* real-data tab */
+    .rmini { cursor: pointer; padding: 4px 4px 2px; border: 2px solid transparent; border-radius: 8px; }
+    .rmini.on { border-color: #0072BD; background: #f6faff; }
+    .rmini.truth { cursor: default; }
+    .rmini h4 { font-size: 13.5px; margin: 0 0 2px; text-align: center; color: #333; }
+    .rmini .rcap { font-size: 11.5px; color: #666; text-align: center; line-height: 1.35; }
+    .rpt { stroke: #fff; stroke-width: 0.5; }
+    .rpt.small { stroke: #111; stroke-width: 1.4; }
+    .rbr { fill: none; stroke-width: 1.1; }
+    .rbr.invert { stroke: #CC3311 !important; stroke-width: 2.2; }
+    #rverdict { text-align: center; font-size: 14px; color: #333; max-width: 90ch; margin: 8px auto 0;
+                min-height: calc(2 * 1.45em); line-height: 1.45; }
+    #footnote { text-align: center; font-size: 13px; color: #777; max-width: 88ch; margin: 14px auto 0; }
+  </style>
+
+  <!-- MathJax v3 (full bundle: no runtime extension fetches; standard LaTeX only) -->
+  <script>
+    window.MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], packages: { '[+]': ['color'] } },
+      svg: { fontCache: 'global' }
+    };
+  </script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js"></script>
+  <script src="https://d3js.org/d3.v7.js"></script>
+
+  <script>
+  // ---- DATA (swap here) -----------------------------------------------------
+  // Tab 1: 9 labelled points, 3 groups of 3; G1-G2 close-ish, G3 farther, so the
+  // dendrogram tells the "3 clusters or 2?" story at different cut heights.
+  const PTS1 = [
+    { id: 'a', x: 1.0, y: 1.0 }, { id: 'b', x: 2.0, y: 1.0 }, { id: 'c', x: 1.5, y: 2.0 },
+    { id: 'd', x: 6.0, y: 1.5 }, { id: 'e', x: 7.0, y: 1.0 }, { id: 'f', x: 7.0, y: 2.2 },
+    { id: 'g', x: 3.5, y: 6.0 }, { id: 'h', x: 4.6, y: 6.0 }, { id: 'i', x: 4.0, y: 7.1 }
+  ];
+  // Tab 2: the notes' toy sketches
+  const TOYS = {
+    outlier: { name: 'two blobs + outlier', k: 3,
+      pts: [[0, 0], [0.4, 0.5], [-0.4, 0.4], [0.2, -0.4],
+            [4, 0.2], [4.4, 0.6], [3.7, 0.5], [4.2, -0.3],
+            [8.5, 4.5]] },
+    chain:   { name: 'a chain + a blob', k: 2,
+      pts: [[0, 0], [0.7, 0.35], [1.4, 0.7], [2.1, 0.95], [2.8, 0.7], [3.5, 0.35], [4.2, 0],
+            [5.6, 2.1], [6.2, 2.5], [5.8, 2.9], [6.4, 2.2]] },
+    bridge:  { name: 'two blobs + a bridge', k: 2,
+      pts: [[0, 0], [0.9, 0], [0, 0.9], [0.95, 0.95],
+            [5.05, 0.2], [5.95, 0.2], [5.05, 1.1], [6.0, 1.15],
+            [1.7, 0.6], [2.55, 0.5], [3.4, 0.45], [4.25, 0.5]] },
+    stretch: { name: 'one elongated cluster', k: 2,
+      pts: [[0, 0], [0.85, 0.15], [1.8, -0.1], [2.62, 0.1], [3.6, -0.15], [4.42, 0.05], [5.4, 0]] },
+    invert:  { name: 'inversion triangle', k: 2,
+      pts: [[0, 0], [1, 0], [0.5, 0.9]] }
+  };
+  const LINKAGES = ['complete', 'single', 'average', 'centroid'];
+  const KCOL = ['#E69F00', '#0072B2', '#009E73', '#CC79A7', '#6A3D9A', '#996633', '#56B4E9', '#888888', '#D55E00'];
+
+  // ---------------------------------------------------------------------------
+  const hexRGB = h => [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)).join(',');
+  const texc = (hex, s) => `\\textcolor[RGB]{${hexRGB(hex.replace('#', ''))}}{${s}}`;
+  let __mjReadyP = null;
+  function mjReady() {
+    return __mjReadyP || (__mjReadyP = new Promise(res => (function chk() {
+      if (window.MathJax && MathJax.startup && MathJax.startup.promise && MathJax.typesetPromise)
+        MathJax.startup.promise.then(res, res);
+      else setTimeout(chk, 50);
+    })()));
+  }
+  function mjRun(els) {
+    window.__mjChain = (window.__mjChain || Promise.resolve())
+      .then(mjReady)                       // MathJax loads async: wait for it instead of silently skipping
+      .then(() => { const live = (els || []).filter(e => e && e.isConnected);
+        if (!live.length) return null;
+        if (MathJax.typesetClear) MathJax.typesetClear(live);
+        return MathJax.typesetPromise(live); })
+      .catch(() => {});
+    return window.__mjChain;
+  }
+  let typesetTimer = null;
+  const typesetQueue = new Set();
+  function typesetSoon(el) {
+    if (el) typesetQueue.add(el);
+    if (typesetTimer) clearTimeout(typesetTimer);
+    typesetTimer = setTimeout(() => { const els = [...typesetQueue]; typesetQueue.clear(); mjRun(els); }, 80);
+  }
+  function typesetNow(els) { mjRun((els || []).filter(Boolean)); }
+
+  // ---- anti-flash live math (same fix as kmeans / kfold-cv): double-buffered MathSlot ----
+  // The new TeX is written into a HIDDEN sibling, typeset there, and swapped in only when ready,
+  // so the visible equation never drops back to raw TeX. Unchanged TeX is not re-typeset.
+  function MathSlot(el, tag) {
+    this.a = document.createElement(tag || 'span'); this.b = document.createElement(tag || 'span');
+    MathSlot.hide(this.b); el.append(this.a, this.b);
+    this.showA = true; this.cur = null; this.pending = null; this.timer = null; this.busy = false;
+  }
+  // the off-screen buffer stays visibility:hidden (NOT display:none) so MathJax can measure the font and
+  // the live math comes out the same size as the static math around it (see applet-tooling notes)
+  MathSlot.hide = el => { el.style.visibility = 'hidden'; el.style.position = 'absolute'; el.style.left = '0'; el.style.top = '0'; el.style.width = '100%'; el.style.pointerEvents = 'none'; el.setAttribute('aria-hidden', 'true'); };
+  MathSlot.show = el => { el.style.visibility = ''; el.style.position = ''; el.style.left = ''; el.style.top = ''; el.style.width = ''; el.style.pointerEvents = ''; el.removeAttribute('aria-hidden'); };
+  MathSlot.prototype.set = function (tex) {
+    if (tex === this.cur && this.pending == null) return;
+    this.pending = tex;
+    if (this.timer) return;
+    this.timer = setTimeout(() => { this.timer = null; this.flush(); }, 60);
+  };
+  MathSlot.prototype.flush = function () {
+    if (this.busy) return;                 // one typeset at a time; the latest pending TeX runs when it lands
+    const tex = this.pending; this.pending = null;
+    if (tex == null || tex === this.cur) return;
+    this.cur = tex; this.busy = true;
+    const hidden = this.showA ? this.b : this.a, vis = this.showA ? this.a : this.b;
+    hidden.innerHTML = tex; this.showA = !this.showA;
+    mjRun([hidden]).then(() => {           // swap, clear the stale buffer
+      MathSlot.show(hidden); MathSlot.hide(vis); vis.innerHTML = '';
+      this.busy = false; if (this.pending != null) this.flush();
+    });
+  };
+  const __slots = new Map();               // host element -> MathSlot (module-level, survives build())
+  function setLive(el, html, tag) {        // replaces `el.innerHTML = html; typeset(el)` for live math
+    if (!el) return;
+    let s = __slots.get(el);
+    if (!s || !s.a.isConnected) { s = new MathSlot(el, tag); __slots.set(el, s); }
+    s.set(html);
+  }
+  function keepLabel(host, key, cls, html) {   // persistent positioned label: created + typeset ONCE,
+    let el = host.select(`.${cls}[data-key="${key}"]`);   // then only re-styled by the caller (no flash)
+    if (el.empty()) {                                      // invisible until its one typeset lands
+      el = host.append('div').attr('class', cls).attr('data-key', key).style('visibility', 'hidden').html(html);
+      const node = el.node(); mjRun([node]).then(() => { node.style.visibility = ''; });
+    }
+    return el;
+  }
+  window.__liveTex = () => Object.fromEntries([...__slots].map(([el, s]) => [el.id || el.className, s.cur]));
+
+  // ============================ HAC engine (exact, naive) =====================
+  const dpt = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1]);
+  function clusterDist(A, B, pts, linkage) {
+    if (linkage === 'centroid') {
+      const m = idx => idx.reduce((s, i) => [s[0] + pts[i][0] / idx.length, s[1] + pts[i][1] / idx.length], [0, 0]);
+      return dpt(m(A), m(B));
+    }
+    let best = linkage === 'single' ? Infinity : (linkage === 'complete' ? -Infinity : 0);
+    for (const i of A) for (const j of B) {
+      const d = dpt(pts[i], pts[j]);
+      if (linkage === 'single') best = Math.min(best, d);
+      else if (linkage === 'complete') best = Math.max(best, d);
+      else best += d;
+    }
+    return linkage === 'average' ? best / (A.length * B.length) : best;
+  }
+  // returns { merges: [{a, b, h, node}], root } — nodes: {leaf:i} | {l, r, h, members}
+  function hac(pts, linkage) {
+    let active = pts.map((_, i) => ({ members: [i], node: { leaf: i, members: [i], h: 0 } }));
+    const merges = [];
+    while (active.length > 1) {
+      let bi = 0, bj = 1, bd = Infinity;
+      for (let i = 0; i < active.length; i++)
+        for (let j = i + 1; j < active.length; j++) {
+          const d = clusterDist(active[i].members, active[j].members, pts, linkage);
+          if (d < bd - 1e-12) { bd = d; bi = i; bj = j; }
+        }
+      const A = active[bi], B = active[bj];
+      const node = { l: A.node, r: B.node, h: bd, members: A.members.concat(B.members) };
+      merges.push({ a: A.members.slice(), b: B.members.slice(), h: bd, node });
+      active = active.filter((_, k) => k !== bi && k !== bj).concat([{ members: node.members, node }]);
+    }
+    return { merges, root: active[0].node };
+  }
+  function leavesOf(node, out = []) {
+    if (node.leaf !== undefined) out.push(node.leaf);
+    else { leavesOf(node.l, out); leavesOf(node.r, out); }
+    return out;
+  }
+  function clustersAfter(merges, nPts, nMerges) {       // state after the first nMerges fusions
+    const parent = Array.from({ length: nPts }, (_, i) => i);
+    const find = i => parent[i] === i ? i : (parent[i] = find(parent[i]));
+    for (let m = 0; m < nMerges; m++) parent[find(merges[m].a[0])] = find(merges[m].b[0]);
+    const groups = new Map();
+    for (let i = 0; i < nPts; i++) {
+      const r = find(i);
+      if (!groups.has(r)) groups.set(r, []);
+      groups.get(r).push(i);
+    }
+    return [...groups.values()];
+  }
+
+  // ============================ dendrogram renderer ===========================
+  // draws the tree from a list of merges (possibly partial) into an svg group.
+  function drawDendro(g, div, opts) {
+    const { pts, merges, upTo, W, H, ox, oy, leafOrderRoot, freshIdx, labels, colorsOf } = opts;
+    g.selectAll('*').remove();
+    div.selectAll(opts.leafClass ? '.' + opts.leafClass : '.dleaf__none').remove();
+    const order = leafOrderRoot ? leavesOf(leafOrderRoot) : pts.map((_, i) => i);
+    const xOf = {};
+    order.forEach((leaf, k) => xOf[leaf] = ox + (k + 0.5) * W / order.length);
+    const maxH = (opts.maxH || Math.max(...merges.map(m => m.h), 1e-9)) * 1.12;
+    const yOf = h => oy + H - h / maxH * H;
+    // leaf labels
+    if (labels) order.forEach(leaf => {
+      div.append('div').attr('class', 'dleaf ' + (opts.leafClass || ''))
+        .style('left', (opts.divX + xOf[leaf]) + 'px').style('top', (opts.divY + oy + H + 3) + 'px')
+        .style('color', colorsOf ? colorsOf(leaf) : '#333')
+        .text(labels[leaf]);
+    });
+    // brackets bottom-up; track each cluster's current (x, y) attachment
+    const pos = {};
+    order.forEach(leaf => pos[leaf] = { x: xOf[leaf], y: oy + H });
+    const keyOf = members => members.slice().sort((a, b) => a - b).join(',');
+    merges.slice(0, upTo).forEach((m, mi) => {
+      const ka = keyOf(m.a), kb = keyOf(m.b);
+      const A = pos[ka] || pos[m.a[0]], B = pos[kb] || pos[m.b[0]];
+      const y = yOf(m.h);
+      const invert = A.y < y || B.y < y;               // child bracket sits BELOW its kids = inversion
+      g.append('path').attr('class', 'dbr' + (mi === freshIdx ? ' fresh' : '') + (invert ? ' invert' : ''))
+        .attr('d', `M${A.x},${A.y} L${A.x},${y} L${B.x},${y} L${B.x},${B.y}`);
+      if (invert && opts.tagInversions)
+        div.append('div').attr('class', 'invtag ' + (opts.leafClass || ''))
+          .style('left', (opts.divX + (A.x + B.x) / 2 + 6) + 'px')
+          .style('top', (opts.divY + y - 16) + 'px').text('inversion!');
+      const nk = keyOf(m.node.members);
+      pos[nk] = { x: (A.x + B.x) / 2, y };
+      delete pos[ka]; delete pos[kb];
+    });
+    return { yOf, maxH };
+  }
+
+  // ============================ state ========================================
+  const S = { tab: 'build', linkage: 'complete', full: null, step: 0, phase: 'compare',
+              cutH: null, toy: 'outlier', toyLink: 'complete', toyK: null,
+              realK: 3, realLink: 'single', realInv: 0 };
+  let UI = null;
+
+  const pts1 = () => PTS1.map(p => [p.x, p.y]);
+
+  function refit() {
+    S.full = hac(pts1(), S.linkage);
+    S.step = 0; S.phase = 'compare'; S.cutH = null;
+    build();
+  }
+
+  // ============================ build ========================================
+  function build() {
+    for (const t of ['build', 'linkages', 'real']) d3.select('#tab_' + t).classed('on', S.tab === t);
+    d3.select('#realWrap').style('display', S.tab === 'real' ? null : 'none');
+    d3.select('#focal').style('display', S.tab === 'real' ? 'none' : null);
+    for (const l of LINKAGES) d3.select('#lk_' + l).classed('on', S.linkage === l);
+    d3.select('#buildWrap').style('display', S.tab === 'build' ? null : 'none');
+    d3.select('#toyWrap').style('display', S.tab === 'linkages' ? null : 'none');
+    d3.select('#btnStep').style('display', S.tab === 'build' ? null : 'none');
+    d3.select('#btnRun').style('display', S.tab === 'build' ? null : 'none');
+    d3.select('#btnReset').style('display', S.tab === 'build' ? null : 'none');
+    d3.select('#lkbox').style('display', S.tab === 'build' ? null : 'none');
+    if (S.tab === 'build') buildTab1(); else if (S.tab === 'real') buildTabReal(); else buildTab2();
+  }
+
+  // ---------------------------- tab 1 ----------------------------------------
+  function buildTab1() {
+    d3.select('#scatBody').selectAll('*').remove();
+    d3.select('#dendBody').selectAll('*').remove();
+    const pm = { top: 12, right: 12, bottom: 30, left: 12 }, pW = 380, pH = 330;
+    const x = d3.scaleLinear([0, 8], [0, pW]);
+    const y = d3.scaleLinear([0, 8], [pH, 0]);
+    const root = d3.select('#scatBody').append('svg')
+      .attr('width', pW + pm.left + pm.right).attr('height', pH + pm.top + pm.bottom);
+    const svg = root.append('g').attr('transform', `translate(${pm.left},${pm.top})`);
+    svg.append('rect').attr('class', 'frame').attr('width', pW).attr('height', pH);
+    UI = { x, y, svg, pm, pW, pH, sdiv: d3.select('#scatBody') };
+    UI.gHull = svg.append('g'); UI.gLink = svg.append('g'); UI.gPts = svg.append('g');
+
+    const dm = { top: 14, right: 12, bottom: 26, left: 44 }, dW = 400, dH = 330;
+    const droot = d3.select('#dendBody').append('svg')
+      .attr('width', dW + dm.left + dm.right).attr('height', dH + dm.top + dm.bottom);
+    UI.dsvg = droot.append('g').attr('transform', `translate(${dm.left},${dm.top})`);
+    UI.ddiv = d3.select('#dendBody'); UI.dm = dm; UI.dW = dW; UI.dH = dH;
+    UI.gDen = UI.dsvg.append('g');
+    UI.gCut = UI.dsvg.append('g');
+    UI.gDAxis = UI.dsvg.append('g').attr('class', 'tick');
+    UI.dsvg.append('rect').attr('class', 'frame').attr('width', dW).attr('height', dH);
+    UI.ddiv.append('div').attr('class', 'axislab')
+      .style('left', (dm.left - 34) + 'px').style('top', (dm.top + dH / 2) + 'px')
+      .style('transform', 'translate(-50%,-50%) rotate(-90deg)').text('dissimilarity (height)');
+    renderTab1();
+    typesetNow([document.getElementById('lead'), document.getElementById('algoline')]);
+  }
+
+  function renderTab1() {
+    const pts = pts1(), merges = S.full.merges;
+    const clusters = clustersAfter(merges, pts.length, S.step);
+    const colorOfPt = {};
+    clusters.forEach((cl, ci) => cl.forEach(i => colorOfPt[i] = clusters.length === 1 ? '#888' : KCOL[ci % KCOL.length]));
+
+    // cut overrides colors when the tree is complete and a cut is set
+    let cutClusters = null;
+    if (S.step === merges.length && S.cutH == null) S.cutH = (merges.at(-1).h + merges.at(-2).h) / 2;
+    if (S.step === merges.length && S.cutH != null) {
+      const below = merges.filter(m => m.h < S.cutH).length;
+      cutClusters = clustersAfter(merges, pts.length, below);
+      cutClusters.forEach((cl, ci) => cl.forEach(i => colorOfPt[i] = KCOL[ci % KCOL.length]));
+    }
+
+    // scatter
+    UI.gHull.selectAll('*').remove();
+    UI.gLink.selectAll('*').remove();
+    UI.gPts.selectAll('*').remove();
+    UI.sdiv.selectAll('.hlab, .fusedist').remove();
+    const groups = cutClusters || clusters;
+    groups.forEach((cl, ci) => {
+      if (cl.length < 2) return;
+      const hull = d3.polygonHull(cl.map(i => [UI.x(pts[i][0]), UI.y(pts[i][1])]));
+      const col = colorOfPt[cl[0]];
+      if (hull) UI.gHull.append('path').attr('class', 'hull').attr('fill', col).attr('stroke', col)
+        .attr('d', 'M' + hull.map(p => p.join(',')).join('L') + 'Z');
+      else {
+        // 2 points: a fat line as "hull"
+        const [i, j] = cl;
+        UI.gHull.append('line').attr('class', 'hull').attr('stroke', col).attr('stroke-width', 16)
+          .attr('stroke-linecap', 'round').attr('stroke-opacity', 0.18)
+          .attr('x1', UI.x(pts[i][0])).attr('y1', UI.y(pts[i][1]))
+          .attr('x2', UI.x(pts[j][0])).attr('y2', UI.y(pts[j][1]));
+      }
+    });
+    pts.forEach((p, i) => {
+      UI.gPts.append('circle').attr('class', 'hpt').attr('r', 6)
+        .attr('cx', UI.x(p[0])).attr('cy', UI.y(p[1])).attr('fill', colorOfPt[i]);
+      UI.sdiv.append('div').attr('class', 'hlab')
+        .style('left', (UI.pm.left + UI.x(p[0])) + 'px')
+        .style('top', (UI.pm.top + UI.y(p[1]) - 13) + 'px')
+        .text(PTS1[i].id);
+    });
+    // compare phase: show the winning pair's link
+    if (S.phase === 'fuse' && S.step < merges.length) {
+      const m = merges[S.step];
+      // draw between the two clusters' closest representative pair for the linkage display:
+      // use members' centroids for the line endpoints (clear and uncluttered)
+      const cen = idx => [d3.mean(idx, i => UI.x(pts[i][0])), d3.mean(idx, i => UI.y(pts[i][1]))];
+      const [ax, ay] = cen(m.a), [bx, by] = cen(m.b);
+      UI.gLink.append('line').attr('class', 'fuselink')
+        .attr('x1', ax).attr('y1', ay).attr('x2', bx).attr('y2', by);
+      UI.sdiv.append('div').attr('class', 'fusedist')
+        .style('left', (UI.pm.left + (ax + bx) / 2) + 'px')
+        .style('top', (UI.pm.top + (ay + by) / 2 - 4) + 'px')
+        .text('d = ' + m.h.toFixed(2));
+    }
+
+    // dendrogram (partial up to S.step, ordered by the FULL tree so leaves never jump)
+    const dd = drawDendro(UI.gDen, UI.ddiv, {
+      pts, merges, upTo: S.step, W: UI.dW - 8, H: UI.dH - 26, ox: 4, oy: 6,
+      divX: UI.dm.left, divY: UI.dm.top, leafOrderRoot: S.full.root,
+      freshIdx: S.step - 1, labels: PTS1.map(p => p.id),
+      colorsOf: i => colorOfPt[i], leafClass: 'd1', tagInversions: true
+    });
+    UI.gDAxis.call(d3.axisLeft(d3.scaleLinear([0, dd.maxH], [UI.dH - 20, 6])).ticks(6));
+
+    // the cut line (enabled once complete)
+    UI.gCut.selectAll('*').remove();
+    if (S.step === merges.length) {
+      if (S.cutH == null) S.cutH = (merges.at(-1).h + merges.at(-2).h) / 2;
+      const ycut = dd.yOf(S.cutH);
+      UI.gCut.append('line').attr('class', 'cutline')
+        .attr('x1', 0).attr('x2', UI.dW).attr('y1', ycut).attr('y2', ycut);
+      const grab = UI.gCut.append('line').attr('class', 'cutgrab')
+        .attr('x1', 0).attr('x2', UI.dW).attr('y1', ycut).attr('y2', ycut);
+      grab.call(d3.drag().on('start drag', ev => {
+        const H = UI.dH - 26, oy = 6;
+        S.cutH = Math.max(0.01, (oy + H - ev.y) / H * dd.maxH);
+        renderTab1();
+      }));
+    }
+
+    renderMatrix(clusters, pts, merges);
+    renderFocal1(clusters, merges, cutClusters);
+    const b = document.getElementById('btnStep');
+    if (S.step >= merges.length) { b.disabled = true; b.textContent = 'Tree complete — drag the cut line'; }
+    else { b.disabled = false;
+      b.textContent = S.phase === 'compare' ? '2a: compare all cluster pairs' : `2b: fuse them (h = ${merges[S.step].h.toFixed(2)})`; }
+  }
+
+  function renderMatrix(clusters, pts, merges) {
+    const mat = document.getElementById('mat');
+    if (S.step >= merges.length) { mat.innerHTML = ''; document.getElementById('matCap').textContent = ''; return; }
+    const named = clusters.map(cl => ({ cl, name: cl.map(i => PTS1[i].id).sort().join('') }));
+    named.sort((p, q) => p.name < q.name ? -1 : 1);
+    const m = merges[S.step];
+    const ka = m.a.map(i => PTS1[i].id).sort().join(''), kb = m.b.map(i => PTS1[i].id).sort().join('');
+    let h = '<tr><th></th>' + named.map(c => `<th>${c.name}</th>`).join('') + '</tr>';
+    for (let r = 0; r < named.length; r++) {
+      h += `<tr><th>${named[r].name}</th>`;
+      for (let c = 0; c < named.length; c++) {
+        if (c <= r) { h += '<td class="dead"></td>'; continue; }
+        const d = clusterDist(named[r].cl, named[c].cl, pts, S.linkage);
+        const isMin = S.phase === 'fuse' &&
+          ((named[r].name === ka && named[c].name === kb) || (named[r].name === kb && named[c].name === ka));
+        h += `<td class="${isMin ? 'min' : ''}">${d.toFixed(2)}</td>`;
+      }
+      h += '</tr>';
+    }
+    mat.innerHTML = h;
+    document.getElementById('matCap').textContent =
+      `step 2a's work: all ${clusters.length * (clusters.length - 1) / 2} pairwise cluster dissimilarities (${S.linkage} linkage)` +
+      (S.phase === 'fuse' ? ' — boxed: the minimum, about to fuse' : '');
+  }
+
+  function renderFocal1(clusters, merges, cutClusters) {
+    const f = { set innerHTML(v) { setLive(document.getElementById('focal'), v); } };   // MathSlot behind the old API
+    const defs = {
+      complete: 'd(A,B) = \\max_{i \\in A,\\, j \\in B} d(\\mathbf{x}_i, \\mathbf{x}_j)',
+      single:   'd(A,B) = \\min_{i \\in A,\\, j \\in B} d(\\mathbf{x}_i, \\mathbf{x}_j)',
+      average:  'd(A,B) = \\tfrac{1}{|A||B|}\\textstyle\\sum_{i \\in A}\\sum_{j \\in B} d(\\mathbf{x}_i, \\mathbf{x}_j)',
+      centroid: 'd(A,B) = \\|\\boldsymbol{\\mu}_A - \\boldsymbol{\\mu}_B\\|'
+    };
+    if (S.step >= merges.length) {
+      const kNow = cutClusters ? cutClusters.length : 1;
+      f.innerHTML = `<span class="stepno">the tree is built — one horizontal cut picks the number of clusters</span>` +
+        `cut at height \\(h = ${S.cutH.toFixed(2)}\\) \\(\\Rightarrow\\) ` +
+        `\\(${texc('6A3D9A', `\\mathbf{${kNow}}`)}\\) cluster${kNow === 1 ? '' : 's'} — drag the purple line: 3 clusters or 2? <i>It depends!</i>`;
+    } else if (S.phase === 'compare') {
+      f.innerHTML = `<span class="stepno">step 2a with ${clusters.length} clusters left — ${S.linkage} linkage:</span>` +
+        `\\(${defs[S.linkage]}\\)`;
+    } else {
+      const m = merges[S.step];
+      const na = m.a.map(i => PTS1[i].id).sort().join(''), nb = m.b.map(i => PTS1[i].id).sort().join('');
+      f.innerHTML = `<span class="stepno">step 2b — the most similar pair wins; its dissimilarity becomes the bracket height</span>` +
+        `fuse \\(\\{${na}\\}\\) and \\(\\{${nb}\\}\\) at \\(h = ${texc('D55E00', `\\mathbf{${m.h.toFixed(2)}}`)}\\)`;
+    }
+  }
+
+  function stepOnce() {
+    if (S.step >= S.full.merges.length) return;
+    if (S.phase === 'compare') S.phase = 'fuse';
+    else { S.step++; S.phase = 'compare'; }
+    renderTab1();
+  }
+  function runAll() { while (S.step < S.full.merges.length) { S.step++; } S.phase = 'compare'; renderTab1(); }
+
+  // ---------------------------- tab 2 ----------------------------------------
+  function buildTab2() {
+    for (const k of Object.keys(TOYS)) d3.select('#toy_' + k).classed('on', S.toy === k);
+    const toy = TOYS[S.toy];
+    if (S.toyK == null) S.toyK = toy.k;
+    for (const kk of [2, 3]) d3.select('#k' + kk).classed('on', S.toyK === kk);
+
+    // scatter colored by the SELECTED linkage's k-cut
+    d3.select('#toyScat').selectAll('*').remove();
+    const pm = { top: 10, right: 10, bottom: 10, left: 10 }, pW = 330, pH = 260;
+    const xe = d3.extent(toy.pts, p => p[0]), ye = d3.extent(toy.pts, p => p[1]);
+    const pad = 0.6;
+    const x = d3.scaleLinear([xe[0] - pad, xe[1] + pad], [0, pW]);
+    const y = d3.scaleLinear([ye[0] - pad, ye[1] + pad], [pH, 0]);
+    const root = d3.select('#toyScat').append('svg')
+      .attr('width', pW + pm.left + pm.right).attr('height', pH + pm.top + pm.bottom);
+    const svg = root.append('g').attr('transform', `translate(${pm.left},${pm.top})`);
+    svg.append('rect').attr('class', 'frame').attr('width', pW).attr('height', pH);
+    const fit = hac(toy.pts, S.toyLink);
+    const cls = clustersAfter(fit.merges, toy.pts.length, toy.pts.length - S.toyK);
+    const colorOf = {};
+    cls.forEach((cl, ci) => cl.forEach(i => colorOf[i] = KCOL[ci % KCOL.length]));
+    toy.pts.forEach((p, i) => svg.append('circle').attr('class', 'hpt').attr('r', 6)
+      .attr('cx', x(p[0])).attr('cy', y(p[1])).attr('fill', colorOf[i]));
+    d3.select('#toyScatCap').text(
+      `${toy.name} — colored by cutting the ${S.toyLink}-linkage tree into k = ${S.toyK} clusters (click a dendrogram to switch)`);
+
+    // four dendrograms, shared height scale so "blown-up heights" are visible
+    const holder = d3.select('#minis').selectAll('*').remove() && d3.select('#minis');
+    const fits = {};
+    let hMax = 0;
+    for (const l of LINKAGES) { fits[l] = hac(toy.pts, l); hMax = Math.max(hMax, ...fits[l].merges.map(m => m.h)); }
+    for (const l of LINKAGES) {
+      const mini = holder.append('div').attr('class', 'mini' + (l === S.toyLink ? ' on' : ''))
+        .attr('id', 'mini_' + l)
+        .on('click', () => { S.toyLink = l; buildTab2(); });
+      const inv = fits[l].merges.some((m, i) => i > 0 && m.h < Math.max(...fits[l].merges.slice(0, i).map(q => q.h)) - 1e-9);
+      mini.append('h4').html(l + (inv ? ' <span class="lose">has an inversion!</span>' : ''));
+      const mw = 205, mh = 170;
+      const msvg = mini.append('svg').attr('width', mw + 8).attr('height', mh + 26).append('g');
+      const g = msvg.append('g');
+      drawDendro(g, d3.select(mini.node()), {
+        pts: toy.pts, merges: fits[l].merges, upTo: fits[l].merges.length,
+        W: mw - 8, H: mh, ox: 8, oy: 4, divX: 8, divY: 34, maxH: hMax,   // SHARED height scale
+        leafOrderRoot: fits[l].root, freshIdx: -1, labels: null,
+        colorsOf: null, leafClass: 'd2_' + l, tagInversions: true
+      });
+      mini.append('div').style('text-align', 'center').style('font-size', '11px').style('color', '#666')
+        .text(`final merge at h = ${fits[l].merges.at(-1).h.toFixed(2)} (axes shared across all four)`);
+    }
+    renderVerdict();
+    typesetNow([document.getElementById('verdict'), document.getElementById('lead'), document.getElementById('algoline')]);
+  }
+
+  // verdicts state only what the drive verifies numerically for THESE toy sets
+  const VERDICTS = {
+    outlier: `<b>Two blobs + an outlier.</b> Every linkage isolates the outlier at k = 3 — but look at
+      the heights: <b>complete</b>'s final merge is the tallest of the four (9.8; the notes' "max
+      distance" arrow goes all the way to the outlier), while <b>average</b> (7.8) and <b>centroid</b>
+      (7.7) barely feel it and <b>single</b> (5.7) feels it least. Pro for average/centroid: robust to
+      outliers; con for complete: the outlier stretches its whole tree.`,
+    chain: `<b>A chain + a blob.</b> <b>Single</b> linkage walks the chain link by link and its k = 2
+      cut recovers <span style="color:#009E73;font-weight:700">chain vs blob</span> exactly (as do
+      average and centroid here). <b>Complete</b> linkage <span style="color:#CC3311;font-weight:700">
+      breaks the chain</span>: its k = 2 keeps the first four links and dumps the chain's tail in with
+      the blob — the max-distance rule can't accept a long thin thing as one cluster. Pro for single:
+      chain-like shapes.`,
+    bridge: `<b>Two blobs + stepping stones.</b> The bridge hops are shorter than the blobs' own
+      internal gaps, and <b>single</b> linkage chains straight across: forced to give k = 2, it
+      <span style="color:#CC3311;font-weight:700">cuts INSIDE blob 1</span> (three corner points vs
+      the other nine!). <b>Complete</b>, <b>average</b> and <b>centroid</b> cut the bridge instead,
+      splitting the stones between the blobs. Con for single: trailing clusters / bad for blobs — the
+      notes' chaining effect.`,
+    stretch: `<b>One elongated cluster.</b> Ask for k = 2 and every linkage must chop the sausage —
+      average and single split it 4 | 3 down the middle ("likes spherical clusters").
+      The tell is in the heights: <b>single</b>'s dendrogram is a staircase of tiny consecutive steps
+      whose final merge (1.0) is a fifth of <b>complete</b>'s (5.4) — single is telling you it never
+      wanted to split at all.`,
+    invert: `<b>The inversion triangle.</b> Two points at distance 1 fuse first (h₁ = 1). Their
+      <b>centroid</b> sits at the midpoint — only 0.90 from the third point here, so the next merge
+      happens at h₂ = 0.90 &lt; h₁: the red bracket dips <i>below</i> its children. Complete, single
+      and average are provably monotone — only centroid linkage can invert.`
+  };
+  function renderVerdict() {
+    document.getElementById('verdict').innerHTML = VERDICTS[S.toy];
+  }
+
+
+  // ---------------------------- real-data tab ---------------------------------
+  // Palmer penguins, bill length (mm) x bill depth (mm); species A/C/G. See SOURCES.
+  const PEN_RAW = "A,39.1,18.7;A,39.5,17.4;A,40.3,18;A,36.7,19.3;A,39.3,20.6;A,38.9,17.8;A,39.2,19.6;A,34.1,18.1;A,42,20.2;A,37.8,17.1;A,37.8,17.3;A,41.1,17.6;A,38.6,21.2;A,34.6,21.1;A,36.6,17.8;A,38.7,19;A,42.5,20.7;A,34.4,18.4;A,46,21.5;A,37.8,18.3;A,37.7,18.7;A,35.9,19.2;A,38.2,18.1;A,38.8,17.2;A,35.3,18.9;A,40.6,18.6;A,40.5,17.9;A,37.9,18.6;A,40.5,18.9;A,39.5,16.7;A,37.2,18.1;A,39.5,17.8;A,40.9,18.9;A,36.4,17;A,39.2,21.1;A,38.8,20;A,42.2,18.5;A,37.6,19.3;A,39.8,19.1;A,36.5,18;A,40.8,18.4;A,36,18.5;A,44.1,19.7;A,37,16.9;A,39.6,18.8;A,41.1,19;A,37.5,18.9;A,36,17.9;A,42.3,21.2;A,39.6,17.7;A,40.1,18.9;A,35,17.9;A,42,19.5;A,34.5,18.1;A,41.4,18.6;A,39,17.5;A,40.6,18.8;A,36.5,16.6;A,37.6,19.1;A,35.7,16.9;A,41.3,21.1;A,37.6,17;A,41.1,18.2;A,36.4,17.1;A,41.6,18;A,35.5,16.2;A,41.1,19.1;A,35.9,16.6;A,41.8,19.4;A,33.5,19;A,39.7,18.4;A,39.6,17.2;A,45.8,18.9;A,35.5,17.5;A,42.8,18.5;A,40.9,16.8;A,37.2,19.4;A,36.2,16.1;A,42.1,19.1;A,34.6,17.2;A,42.9,17.6;A,36.7,18.8;A,35.1,19.4;A,37.3,17.8;A,41.3,20.3;A,36.3,19.5;A,36.9,18.6;A,38.3,19.2;A,38.9,18.8;A,35.7,18;A,41.1,18.1;A,34,17.1;A,39.6,18.1;A,36.2,17.3;A,40.8,18.9;A,38.1,18.6;A,40.3,18.5;A,33.1,16.1;A,43.2,18.5;A,35,17.9;A,41,20;A,37.7,16;A,37.8,20;A,37.9,18.6;A,39.7,18.9;A,38.6,17.2;A,38.2,20;A,38.1,17;A,43.2,19;A,38.1,16.5;A,45.6,20.3;A,39.7,17.7;A,42.2,19.5;A,39.6,20.7;A,42.7,18.3;A,38.6,17;A,37.3,20.5;A,35.7,17;A,41.1,18.6;A,36.2,17.2;A,37.7,19.8;A,40.2,17;A,41.4,18.5;A,35.2,15.9;A,40.6,19;A,38.8,17.6;A,41.5,18.3;A,39,17.1;A,44.1,18;A,38.5,17.9;A,43.1,19.2;A,36.8,18.5;A,37.5,18.5;A,38.1,17.6;A,41.1,17.5;A,35.6,17.5;A,40.2,20.1;A,37,16.5;A,39.7,17.9;A,40.2,17.1;A,40.6,17.2;A,32.1,15.5;A,40.7,17;A,37.3,16.8;A,39,18.7;A,39.2,18.6;A,36.6,18.4;A,36,17.8;A,37.8,18.1;A,36,17.1;A,41.5,18.5;G,46.1,13.2;G,50,16.3;G,48.7,14.1;G,50,15.2;G,47.6,14.5;G,46.5,13.5;G,45.4,14.6;G,46.7,15.3;G,43.3,13.4;G,46.8,15.4;G,40.9,13.7;G,49,16.1;G,45.5,13.7;G,48.4,14.6;G,45.8,14.6;G,49.3,15.7;G,42,13.5;G,49.2,15.2;G,46.2,14.5;G,48.7,15.1;G,50.2,14.3;G,45.1,14.5;G,46.5,14.5;G,46.3,15.8;G,42.9,13.1;G,46.1,15.1;G,44.5,14.3;G,47.8,15;G,48.2,14.3;G,50,15.3;G,47.3,15.3;G,42.8,14.2;G,45.1,14.5;G,59.6,17;G,49.1,14.8;G,48.4,16.3;G,42.6,13.7;G,44.4,17.3;G,44,13.6;G,48.7,15.7;G,42.7,13.7;G,49.6,16;G,45.3,13.7;G,49.6,15;G,50.5,15.9;G,43.6,13.9;G,45.5,13.9;G,50.5,15.9;G,44.9,13.3;G,45.2,15.8;G,46.6,14.2;G,48.5,14.1;G,45.1,14.4;G,50.1,15;G,46.5,14.4;G,45,15.4;G,43.8,13.9;G,45.5,15;G,43.2,14.5;G,50.4,15.3;G,45.3,13.8;G,46.2,14.9;G,45.7,13.9;G,54.3,15.7;G,45.8,14.2;G,49.8,16.8;G,46.2,14.4;G,49.5,16.2;G,43.5,14.2;G,50.7,15;G,47.7,15;G,46.4,15.6;G,48.2,15.6;G,46.5,14.8;G,46.4,15;G,48.6,16;G,47.5,14.2;G,51.1,16.3;G,45.2,13.8;G,45.2,16.4;G,49.1,14.5;G,52.5,15.6;G,47.4,14.6;G,50,15.9;G,44.9,13.8;G,50.8,17.3;G,43.4,14.4;G,51.3,14.2;G,47.5,14;G,52.1,17;G,47.5,15;G,52.2,17.1;G,45.5,14.5;G,49.5,16.1;G,44.5,14.7;G,50.8,15.7;G,49.4,15.8;G,46.9,14.6;G,48.4,14.4;G,51.1,16.5;G,48.5,15;G,55.9,17;G,47.2,15.5;G,49.1,15;G,47.3,13.8;G,46.8,16.1;G,41.7,14.7;G,53.4,15.8;G,43.3,14;G,48.1,15.1;G,50.5,15.2;G,49.8,15.9;G,43.5,15.2;G,51.5,16.3;G,46.2,14.1;G,55.1,16;G,44.5,15.7;G,48.8,16.2;G,47.2,13.7;G,46.8,14.3;G,50.4,15.7;G,45.2,14.8;G,49.9,16.1;C,46.5,17.9;C,50,19.5;C,51.3,19.2;C,45.4,18.7;C,52.7,19.8;C,45.2,17.8;C,46.1,18.2;C,51.3,18.2;C,46,18.9;C,51.3,19.9;C,46.6,17.8;C,51.7,20.3;C,47,17.3;C,52,18.1;C,45.9,17.1;C,50.5,19.6;C,50.3,20;C,58,17.8;C,46.4,18.6;C,49.2,18.2;C,42.4,17.3;C,48.5,17.5;C,43.2,16.6;C,50.6,19.4;C,46.7,17.9;C,52,19;C,50.5,18.4;C,49.5,19;C,46.4,17.8;C,52.8,20;C,40.9,16.6;C,54.2,20.8;C,42.5,16.7;C,51,18.8;C,49.7,18.6;C,47.5,16.8;C,47.6,18.3;C,52,20.7;C,46.9,16.6;C,53.5,19.9;C,49,19.5;C,46.2,17.5;C,50.9,19.1;C,45.5,17;C,50.9,17.9;C,50.8,18.5;C,50.1,17.9;C,49,19.6;C,51.5,18.7;C,49.8,17.3;C,48.1,16.4;C,51.4,19;C,45.7,17.3;C,50.7,19.7;C,42.5,17.3;C,52.2,18.8;C,45.2,16.6;C,49.3,19.9;C,50.2,18.8;C,45.6,19.4;C,51.9,19.5;C,46.8,16.5;C,45.7,17;C,55.8,19.8;C,43.5,18.1;C,49.6,18.2;C,50.8,19;C,50.2,18.7";
+  const PEN = PEN_RAW.split(';').map(r => { const [s, a, b] = r.split(','); return { s, x: +a, y: +b }; });
+  const SPECIES = { A: { name: 'Adelie', col: '#E69F00' }, C: { name: 'Chinstrap', col: '#CC79A7' },
+                    G: { name: 'Gentoo', col: '#009E73' } };
+  const XCOL = ['#0072B2', '#56B4E9', '#996633', '#555555', '#D55E00', '#999999'];   // unmatched clusters
+  const PENZ = (() => {                                   // z-scored (population sd)
+    const mx = d3.mean(PEN, p => p.x), my = d3.mean(PEN, p => p.y);
+    const sx = Math.sqrt(d3.mean(PEN, p => (p.x - mx) ** 2)), sy = Math.sqrt(d3.mean(PEN, p => (p.y - my) ** 2));
+    return PEN.map(p => [(p.x - mx) / sx, (p.y - my) / sy]);
+  })();
+
+  // Lance-Williams agglomeration on a full distance matrix: O(n^3), fine for n ~ 350.
+  // Same output shape as hac(): merges [{a, b, h, node}], root.
+  function hacLW(pts, linkage) {
+    const n = pts.length, sq = linkage === 'centroid';
+    const D = new Float64Array(n * n);
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      const dx = pts[i][0] - pts[j][0], dy = pts[i][1] - pts[j][1], d2 = dx * dx + dy * dy;
+      D[i * n + j] = D[j * n + i] = sq ? d2 : Math.sqrt(d2);
+    }
+    const alive = new Uint8Array(n).fill(1), size = new Array(n).fill(1);
+    const node = pts.map((_, i) => ({ leaf: i, members: [i], h: 0 }));
+    const merges = [];
+    for (let step = 0; step < n - 1; step++) {
+      let bi = -1, bj = -1, bd = Infinity;
+      for (let i = 0; i < n; i++) { if (!alive[i]) continue; const row = i * n;
+        for (let j = i + 1; j < n; j++) if (alive[j] && D[row + j] < bd) { bd = D[row + j]; bi = i; bj = j; } }
+      const ni = size[bi], nj = size[bj], dij = D[bi * n + bj];
+      for (let k = 0; k < n; k++) {
+        if (!alive[k] || k === bi || k === bj) continue;
+        const dik = D[bi * n + k], djk = D[bj * n + k];
+        let v;
+        if (linkage === 'single') v = Math.min(dik, djk);
+        else if (linkage === 'complete') v = Math.max(dik, djk);
+        else if (linkage === 'average') v = (ni * dik + nj * djk) / (ni + nj);
+        else v = (ni * dik + nj * djk) / (ni + nj) - ni * nj * dij / ((ni + nj) ** 2);
+        D[bi * n + k] = D[k * n + bi] = v;
+      }
+      const h = sq ? Math.sqrt(Math.max(bd, 0)) : bd;
+      const A = node[bi], B = node[bj];
+      const nd = { l: A, r: B, h, members: A.members.concat(B.members) };
+      merges.push({ a: A.members.slice(), b: B.members.slice(), h, node: nd });
+      node[bi] = nd; size[bi] = ni + nj; alive[bj] = 0;
+    }
+    const last = merges.at(-1);
+    return { merges, root: last ? last.node : node[0] };
+  }
+  // Complete / average: nearest-neighbor chain, a line-by-line port of scipy's nn_chain, so
+  // TIES break exactly as in scipy.cluster.hierarchy.linkage (penguin bills are measured to
+  // 0.1 mm, so many distances tie exactly and complete linkage's tree depends on tie-breaking).
+  // Merges come out sorted by height (stable), as in scipy.
+  function hacNNChain(pts, linkage) {
+    const n = pts.length, D = new Float64Array(n * n);
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++)
+      { const dx = pts[i][0] - pts[j][0], dy = pts[i][1] - pts[j][1]; D[i * n + j] = D[j * n + i] = Math.sqrt(dx * dx + dy * dy); }
+    const size = new Array(n).fill(1), node = pts.map((_, i) => ({ leaf: i, members: [i], h: 0 }));
+    const chain = []; const merges = [];
+    for (let k = 0; k < n - 1; k++) {
+      if (!chain.length) for (let i = 0; i < n; i++) if (size[i] > 0) { chain.push(i); break; }
+      let x, y, cur;
+      while (true) {
+        x = chain[chain.length - 1];
+        if (chain.length > 1) { y = chain[chain.length - 2]; cur = D[x * n + y]; } else cur = Infinity;
+        for (let i = 0; i < n; i++) {
+          if (size[i] === 0 || i === x) continue;
+          if (D[x * n + i] < cur) { cur = D[x * n + i]; y = i; }
+        }
+        if (chain.length > 1 && y === chain[chain.length - 2]) break;
+        chain.push(y);
+      }
+      chain.length -= 2;
+      if (x > y) [x, y] = [y, x];
+      const nx = size[x], ny = size[y];
+      const A = node[x], B = node[y];
+      const nd = { l: A, r: B, h: cur, members: A.members.concat(B.members) };
+      merges.push({ a: A.members.slice(), b: B.members.slice(), h: cur, node: nd });
+      size[x] = 0; size[y] = nx + ny; node[y] = nd;
+      for (let i = 0; i < n; i++) {
+        if (size[i] === 0 || i === y) continue;
+        const dx = D[i * n + x], dy = D[i * n + y];
+        const v = linkage === 'complete' ? Math.max(dx, dy) : (nx * dx + ny * dy) / (nx + ny);
+        D[i * n + y] = D[y * n + i] = v;
+      }
+    }
+    merges.sort((p, q) => p.h - q.h);                        // stable, like scipy's mergesort
+    return { merges, root: merges.at(-1).node };
+  }
+  const realFits = {};
+  const realFit = l => realFits[l] || (realFits[l] =
+    (l === 'complete' || l === 'average') ? hacNNChain(PENZ, l) : hacLW(PENZ, l));
+
+  // cut into K clusters; color each cluster by its greedily matched species
+  function realCut(l, K) {
+    const n = PEN.length, fit = realFit(l);
+    const cl = clustersAfter(fit.merges, n, n - K);
+    const ov = [];
+    cl.forEach((c, ci) => { const cnt = { A: 0, C: 0, G: 0 }; c.forEach(i => cnt[PEN[i].s]++);
+      for (const sp in cnt) ov.push([cnt[sp], sp, ci]); });
+    ov.sort((p, q) => q[0] - p[0] || q[2] - p[2]);
+    // agreement: best greedy one-to-one species <-> cluster matching (accuracy after matching)
+    let hit = 0; { const us = new Set(), uc = new Set();
+      for (const [v, sp, ci] of ov) { if (us.has(sp) || uc.has(ci)) continue; us.add(sp); uc.add(ci); hit += v; } }
+    // colors: a cluster wears a species' color only if it is MOSTLY that species (and holds
+    // >= 20% of it), so stragglers and a giant mixed blob get neutral colors
+    const spOf = {}, used = new Set();
+    const nSp = d3.rollup(PEN, v => v.length, p => p.s);
+    for (const [v, sp, ci] of ov) { if (used.has(sp) || spOf[ci] !== undefined) continue;
+      if (v <= cl[ci].length / 2 || v < 0.2 * nSp.get(sp)) continue;
+      spOf[ci] = sp; used.add(sp); }
+    let xi = 0;
+    const order = cl.map((c, ci) => ci).sort((p, q) => cl[q].length - cl[p].length);
+    const colOf = {};
+    order.forEach(ci => colOf[ci] = spOf[ci] ? SPECIES[spOf[ci]].col : XCOL[xi++ % XCOL.length]);
+    const lab = new Array(n);
+    cl.forEach((c, ci) => c.forEach(i => lab[i] = ci));
+    return { cl, lab, colOf, spOf, agree: hit / n, sizes: cl.map(c => c.length).sort((p, q) => q - p) };
+  }
+
+  function realScatter(host, colorOf, radiusOf, small) {
+    const pm = { top: 6, right: 6, bottom: 30, left: 34 }, pW = 196, pH = 170;
+    const x = d3.scaleLinear().domain([31, 61]).range([0, pW]);
+    const y = d3.scaleLinear().domain([12.8, 21.8]).range([pH, 0]);
+    const root = host.append('svg').attr('width', pW + pm.left + pm.right).attr('height', pH + pm.top + pm.bottom);
+    const svg = root.append('g').attr('transform', `translate(${pm.left},${pm.top})`);
+    svg.append('rect').attr('class', 'frame').attr('width', pW).attr('height', pH);
+    svg.append('g').attr('class', 'tick').attr('transform', `translate(0,${pH})`).call(d3.axisBottom(x).ticks(4));
+    svg.append('g').attr('class', 'tick').call(d3.axisLeft(y).ticks(4));
+    svg.append('text').attr('x', pW / 2).attr('y', pH + 27).attr('text-anchor', 'middle')
+      .attr('font-size', 10.5).attr('fill', '#555').text('bill length (mm)');
+    svg.append('text').attr('transform', `translate(-26,${pH / 2}) rotate(-90)`).attr('text-anchor', 'middle')
+      .attr('font-size', 10.5).attr('fill', '#555').text('bill depth (mm)');
+    const idx = PEN.map((_, i) => i).sort((p, q) => (small(p) ? 1 : 0) - (small(q) ? 1 : 0));   // stragglers on top
+    svg.append('g').selectAll('circle').data(idx).join('circle')
+      .attr('class', i => 'rpt' + (small(i) ? ' small' : ''))
+      .attr('r', i => radiusOf(i)).attr('cx', i => x(PEN[i].x)).attr('cy', i => y(PEN[i].y))
+      .attr('fill', i => colorOf(i));
+  }
+
+  function buildTabReal() {
+    const K = S.realK;
+    for (let k = 2; k <= 6; k++) d3.select('#rk' + k).classed('on', K === k);
+    const holder = d3.select('#rminis'); holder.selectAll('*').remove();
+    // the truth, for reference
+    const tm = holder.append('div').attr('class', 'rmini truth');
+    tm.append('h4').text('the species (truth)');
+    realScatter(tm, i => SPECIES[PEN[i].s].col, () => 2.6, () => false);
+    const cnt = d3.rollup(PEN, v => v.length, p => p.s);
+    tm.append('div').attr('class', 'rcap').html(['A', 'C', 'G'].map(sp =>
+      `<span style="color:${SPECIES[sp].col};font-weight:700">${SPECIES[sp].name}</span> ${cnt.get(sp)}`).join(' · '));
+    const cuts = {};
+    for (const l of LINKAGES) {
+      const c = cuts[l] = realCut(l, K);
+      const mi = holder.append('div').attr('class', 'rmini' + (l === S.realLink ? ' on' : '')).attr('id', 'rmini_' + l)
+        .on('click', () => { S.realLink = l; buildTabReal(); });
+      mi.append('h4').text(l + ' linkage');
+      const small = i => c.cl[c.lab[i]].length <= 3;
+      realScatter(mi, i => c.colOf[c.lab[i]], i => small(i) ? 4.2 : 2.6, small);
+      mi.append('div').attr('class', 'rcap')
+        .html(`sizes ${c.sizes.join(' · ')}<br>agrees with species: <b>${Math.round(100 * c.agree)}%</b>`);
+    }
+    renderRealDendro(cuts[S.realLink]);
+    document.getElementById('rverdict').innerHTML = K === 3 ? REAL_VERDICT : '';
+  }
+  const REAL_VERDICT = `<b>Single</b> chains through the gaps: one giant cluster plus stragglers.
+    <b>Complete</b> wants compact groups and cuts the Chinstraps in two.
+    <b>Average</b> and <b>centroid</b> come closest to the species.`;
+
+  function renderRealDendro(cut) {
+    const l = S.realLink, fit = realFit(l), n = PEN.length, K = S.realK;
+    const host = d3.select('#rdend'); host.selectAll('*').remove();
+    const m = { top: 8, right: 10, bottom: 16, left: 44 }, W = 860, H = 230;
+    const svg = host.append('svg').attr('width', W + m.left + m.right).attr('height', H + m.top + m.bottom)
+      .append('g').attr('transform', `translate(${m.left},${m.top})`);
+    const order = leavesOf(fit.root), xOf = new Float64Array(n);
+    order.forEach((leaf, k) => xOf[leaf] = (k + 0.5) * W / n);
+    const maxH = fit.merges.at(-1).h * 1.06;
+    const y = d3.scaleLinear().domain([0, maxH]).range([H, 0]);
+    svg.append('g').attr('class', 'tick').call(d3.axisLeft(y).ticks(5));
+    svg.append('text').attr('transform', `translate(-34,${H / 2}) rotate(-90)`).attr('text-anchor', 'middle')
+      .attr('font-size', 11).attr('fill', '#444').text('height');
+    const nCut = n - K, g = svg.append('g');
+    const pos = new Map();                                       // node -> {x, y}
+    const at = nd => nd.leaf !== undefined ? { x: xOf[nd.leaf], y: H } : pos.get(nd);
+    let nInv = 0;
+    fit.merges.forEach((mg, mi) => {
+      const A = at(mg.node.l), B = at(mg.node.r), yy = y(mg.h);
+      const inv = A.y < yy - 1e-9 || B.y < yy - 1e-9;
+      if (inv) nInv++;
+      const col = mi < nCut ? cut.colOf[cut.lab[mg.a[0]]] : '#888';
+      g.append('path').attr('class', 'rbr' + (inv ? ' invert' : '')).attr('stroke', col)
+        .attr('d', `M${A.x},${A.y} L${A.x},${yy} L${B.x},${yy} L${B.x},${B.y}`);
+      pos.set(mg.node, { x: (A.x + B.x) / 2, y: yy });
+    });
+    // species strip under the leaves
+    svg.append('g').selectAll('rect').data(order).join('rect')
+      .attr('x', (leaf, k) => k * W / n).attr('width', W / n + 0.3).attr('y', H + 3).attr('height', 7)
+      .attr('fill', leaf => SPECIES[PEN[leaf].s].col);
+    // cut line between the (n-K)-th and (n-K+1)-th merges
+    const hc = (fit.merges[nCut - 1].h + fit.merges[nCut].h) / 2;
+    svg.append('line').attr('class', 'cutline').style('cursor', 'default')
+      .attr('x1', 0).attr('x2', W).attr('y1', y(hc)).attr('y2', y(hc));
+    svg.append('rect').attr('class', 'frame').attr('width', W).attr('height', H);
+    d3.select('#rdendTitle').text(`${l}-linkage dendrogram, cut into K = ${K} clusters`);
+    d3.select('#rdendCap').html(`branches colored by cluster; the strip under the leaves is each penguin's species` +
+      (nInv ? `; <span style="color:#CC3311;font-weight:700">${nInv} inversions</span> (red)` : '') +
+      `. Click a panel above to see its tree.`);
+    S.realInv = nInv;
+  }
+
+  // ============================ boot ==========================================
+  function main() {
+    if (main.done) return; main.done = true;
+    document.getElementById('algoline').innerHTML = ``;
+    //   `(1) each point is its own cluster; (2) for \\(i = n, n-1, \\dots, 2\\): ` +
+    //   `<b>2a</b> compare all clusters (dissimilarity), <b>2b</b> fuse the two most similar — ` +
+    //   `the dissimilarity is the bracket's height.`;
+    d3.select('#tab_build').on('click', () => { S.tab = 'build'; build(); });
+    d3.select('#tab_linkages').on('click', () => { S.tab = 'linkages'; build(); });
+    d3.select('#tab_real').on('click', () => { S.tab = 'real'; build(); });
+    for (let kk = 2; kk <= 6; kk++) d3.select('#rk' + kk).on('click', () => { S.realK = kk; buildTabReal(); });
+    for (const l of LINKAGES)
+      d3.select('#lk_' + l).on('click', () => { S.linkage = l; refit(); });
+    d3.select('#btnStep').on('click', stepOnce);
+    d3.select('#btnRun').on('click', runAll);
+    d3.select('#btnReset').on('click', refit);
+    for (const k of Object.keys(TOYS))
+      d3.select('#toy_' + k).on('click', () => { S.toy = k; S.toyK = null; buildTab2(); });
+    for (const kk of [2, 3])
+      d3.select('#k' + kk).on('click', () => { S.toyK = kk; buildTab2(); });
+
+    window.__hacApi = {
+      state: () => ({ tab: S.tab, linkage: S.linkage, step: S.step, phase: S.phase,
+        nMerges: S.full ? S.full.merges.length : 0, cutH: S.cutH, toy: S.toy, toyLink: S.toyLink, toyK: S.toyK }),
+      merges: () => S.full.merges.map(m => ({ a: m.a.slice(), b: m.b.slice(), h: m.h })),
+      step: stepOnce, run: runAll, reset: refit,
+      setLinkage: l => { S.linkage = l; refit(); },
+      setCut: h => { S.cutH = h; renderTab1(); },
+      setTab: t => { S.tab = t; build(); },
+      setToy: (k, link, kk) => { if (k) { S.toy = k; S.toyK = null; } if (link) S.toyLink = link;
+        if (kk) S.toyK = kk; buildTab2(); },
+      hac: (pts, link) => { const f = hac(pts, link); return { merges: f.merges.map(m => ({ a: m.a, b: m.b, h: m.h })) }; },
+      clustersAfter: (merges, n2, k2) => clustersAfter(S.full.merges, n2, k2),
+      pts1: () => pts1(), toys: () => JSON.parse(JSON.stringify(TOYS)),
+      real: (l, K) => { const c = realCut(l, K); return { lab: c.lab, sizes: c.sizes, agree: c.agree,
+        spOf: c.spOf, heights: realFit(l).merges.map(m => m.h) }; },
+      realState: () => ({ K: S.realK, link: S.realLink, inv: S.realInv }),
+      setReal: (K, l) => { if (K) S.realK = K; if (l) S.realLink = l; buildTabReal(); },
+      pen: () => PEN.map(p => [p.s, p.x, p.y])
+    };
+    refit();
+  }
+  window.addEventListener('load', main);
+  </script>
+</head>
+<body>
+  <h1>Hierarchical Clustering</h1>
+  <p class="lead" id="lead">Here is the algorithm for Hierarchical clustering:
+    <ol>
+      <li> Each point is its own cluster</li>
+      <li> For i = n, n-1, n-2, ..., 2:
+        <ol type="a">
+          <li>Compare all clusters to one another (dissimilarity metric)</li>
+          <li>Fuse the two most similar ones, Dissimilarity tells you height in dendogram</li>
+        </ol>
+      </li>
+    </ol>
+    <!-- Are there 3 clusters here or 7? <i>It depends</i> — and hierarchical
+    clustering refuses to choose for you. It builds the <b>whole tree</b> of fusions: start with every
+    point alone, repeatedly fuse the two most similar clusters, and record each fusion's dissimilarity
+    as a height. One horizontal cut through the tree then gives you any number of clusters you like. -->
+  </p>
+
+  <div class="controls">
+    <button id="tab_build" class="tab on">1 · Build the tree, step by step</button>
+    <button id="tab_real" class="tab">2 · Real data: penguins</button>
+    <!-- toy "Linkages: strengths & weaknesses" tab hidden for now; uncomment to restore
+         (its JS/markup is still intact):
+    <button id="tab_linkages" class="tab">Linkages: strengths &amp; weaknesses</button>
+    -->
+    <span id="lkbox" style="margin-left:12px">
+      <button id="lk_complete" class="lbtn on">complete</button><button id="lk_single" class="lbtn">single</button><button id="lk_average" class="lbtn">average</button><button id="lk_centroid" class="lbtn">centroid</button>
+    </span>
+    <button id="btnStep" class="abtn">2a: compare all cluster pairs</button>
+    <button id="btnRun" class="gbtn">Run to the full tree</button>
+    <button id="btnReset" class="gbtn">Reset</button>
+  </div>
+
+  <div id="algoline" style="text-align:center; font-size:14.5px; color:#444; min-height:24px; margin:4px 0 0;"></div>
+  <div id="focal"></div>
+
+  <div id="buildWrap">
+    <div class="wrap">
+      <div class="panel">
+        <h3>the data — 9 points, distances chosen to be easy</h3>
+        <div id="scatBody" class="panel"></div>
+        <table id="mat"></table>
+        <div id="matCap" class="caption"></div>
+      </div>
+      <div class="panel">
+        <h3>the dendrogram, growing bottom-up</h3>
+        <div id="dendBody" class="panel"></div>
+        <div class="caption">every bracket's height = the dissimilarity at which that fusion happened;
+          after the last fusion a draggable purple <b>cut line</b> appears</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="realWrap" style="display:none">
+    <div class="controls" style="margin-top:2px">
+      number of clusters K:
+      <button id="rk2" class="kbtn">2</button><button id="rk3" class="kbtn on">3</button><button id="rk4" class="kbtn">4</button><button id="rk5" class="kbtn">5</button><button id="rk6" class="kbtn">6</button>
+    </div>
+    <div class="caption" style="max-width:90ch; margin-bottom:6px">342 Palmer penguins: bill length and depth, z-scored, Euclidean distance.
+      Same data, four linkages, each tree cut into K clusters; a cluster takes a species' color when it is mostly that species.</div>
+    <div id="rminis" style="display:flex; flex-wrap:wrap; gap:6px; justify-content:center;"></div>
+    <div id="rverdict"></div>
+    <div class="panel" style="margin-top:10px">
+      <h3 id="rdendTitle"></h3>
+      <div id="rdend" style="display:flex; justify-content:center"></div>
+      <div id="rdendCap" class="caption" style="max-width:90ch"></div>
+    </div>
+  </div>
+
+  <div id="toyWrap" style="display:none">
+    <div class="controls" style="margin-top:0">
+      <button id="toy_outlier" class="dbtn on">blobs + outlier</button>
+      <button id="toy_chain" class="dbtn">chain + blob</button>
+      <button id="toy_bridge" class="dbtn">blobs + bridge</button>
+      <button id="toy_stretch" class="dbtn">elongated cluster</button>
+      <button id="toy_invert" class="dbtn">inversion triangle</button>
+      <span style="margin-left:12px">k: <button id="k2" class="kbtn">2</button><button id="k3" class="kbtn">3</button></span>
+    </div>
+    <div class="wrap">
+      <div class="panel">
+        <h3>the toy data</h3>
+        <div id="toyScat" class="panel"></div>
+        <div id="toyScatCap" class="caption"></div>
+      </div>
+      <div class="panel" style="max-width: 460px;">
+        <h3>same data, four trees</h3>
+        <div id="minis" style="display:flex; flex-wrap:wrap; gap:8px; justify-content:center;"></div>
+      </div>
+    </div>
+    <div id="verdict"></div>
+  </div>
+
+  <!-- <p id="footnote">Any metric works for point dissimilarity (even non-differentiable ones — nothing here
+    needs a gradient); Euclidean is the usual choice, and the linkage decides how to lift it from points
+    to <i>groups</i>. Complete, single and average are monotone (each fusion is at least as high as the
+    last, so the dendrogram is well-ordered); centroid linkage is the odd one out — its inversions are
+    the price of an otherwise intuitive definition.</p> -->
+</body>
+</html>
