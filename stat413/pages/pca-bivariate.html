@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PCA on a Bivariate Normal</title>
+  <link rel="stylesheet" href="../styling/global.css">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; color: #222; }
+    h1 { font-size: 24px; }
+    .pb-intro, .pb-eq { max-width: 980px; }
+    .pb-eq { font-size: 15px; margin: 10px 0; }
+    .pb-box { border: 1.5px solid #888; border-radius: 6px; padding: 8px 14px; margin: 10px 0; max-width: 860px; font-size: 14.5px; background: #fafafa; }
+    .pb-controls { margin: 12px 0; display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; }
+    .pb-controls fieldset { border: 1px solid #ccc; border-radius: 6px; padding: 8px 12px; }
+    .pb-controls legend { font-weight: bold; font-size: 13px; padding: 0 6px; }
+    .pb-row { margin: 5px 0; font-size: 14px; }
+    .pb-srow { display: flex; align-items: center; gap: 8px; margin: 5px 0; font-size: 14px; }
+    .pb-srow .lab { width: 26px; text-align: right; }
+    .pb-srow input[type="range"] { width: 140px; }
+    .pb-srow .val { width: 44px; font-variant-numeric: tabular-nums; }
+    button { font-size: 13.5px; padding: 4px 10px; border-radius: 5px; border: 1px solid #999; background: #f5f5f5; cursor: pointer; }
+    button:hover { background: #eee; }
+    .pb-main { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+    .pb-stage { position: relative; display: inline-block; }
+    .pb-stage svg { display: block; }
+    .axl { position: absolute; font-size: 13px; color: #333; pointer-events: none; }
+    .axl-x { transform: translateX(-50%); }
+    .axl-y { transform: translate(-50%, -50%) rotate(-90deg); left: 4px; white-space: nowrap; }
+    .pb-side { max-width: 430px; }
+    .pb-side .ttl { font-size: 14px; margin: 2px 0; }
+    .ticktext { font-size: 10px; fill: #555; }
+    .pb-cap { font-size: 14px; margin-top: 8px; max-width: 840px; }
+    .pb-legend { font-size: 13.5px; margin: 6px 0; max-width: 980px; }
+    .pb-legend .ln { display: inline-block; width: 20px; height: 0; border-top: 3px solid; margin: 0 4px 3px 12px; vertical-align: middle; }
+    .pb-legend .ln.dash { border-top-style: dashed; }
+    .pb-legend .dt { display: inline-block; width: 7px; height: 7px; border-radius: 50%; opacity: 0.6; margin: 0 5px 1px 14px; vertical-align: middle; }
+    .pb-vals { border-collapse: collapse; font-size: 13px; margin-top: 10px; font-variant-numeric: tabular-nums; }
+    .pb-vals th, .pb-vals td { border: 1px solid #ddd; padding: 3px 9px; text-align: right; }
+    .pb-vals th { background: #f7f7f7; font-weight: normal; }
+    .pb-vals td:first-child { text-align: left; }
+    .pb-mats { position: relative; margin: 6px 0 14px 4px; font-size: 16px; min-height: 4.6em; }
+    .pb-note { font-size: 15px; color: #222; margin-top: 6px; max-width: 430px; }
+  </style>
+
+  <script src="https://d3js.org/d3.v7.js"></script>
+  <script>window.MathJax = {
+    tex: { inlineMath: [['\\(', '\\)'], ['$', '$']] },
+    svg: { fontCache: 'global' }
+  };</script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</head>
+
+<body>
+  <h1>PCA on a Bivariate Normal</h1>
+  <p class="pb-intro">
+    For a centered bivariate normal, PCA needs no algorithm at all: we have a closed form solution.
+  </p>
+
+  <div class="pb-eq">
+    \( \Sigma = \begin{bmatrix} \sigma_x^2 & r\sigma_x\sigma_y \\ r\sigma_x\sigma_y & \sigma_y^2 \end{bmatrix},
+    \qquad p(\mathbf{x}) = \frac{1}{2\pi \sigma_x \sigma_y \sqrt{1-r^2}}
+    \exp\!\left( -\frac{1}{2(1-r^2)} \left[ \frac{x^2}{\sigma_x^2} - \frac{2rxy}{\sigma_x\sigma_y} + \frac{y^2}{\sigma_y^2} \right] \right) \)
+  </div>
+
+  <div class="pb-box">
+    \( \lambda_\pm = \dfrac{\sigma_x^2 + \sigma_y^2 \pm \sqrt{(\sigma_x^2 - \sigma_y^2)^2 + 4r^2\sigma_x^2\sigma_y^2}}{2},
+    \qquad
+    K_\pm = \dfrac{\sigma_y^2 - \sigma_x^2 \pm \sqrt{(\sigma_x^2 - \sigma_y^2)^2 + 4r^2\sigma_x^2\sigma_y^2}}{2r\sigma_x\sigma_y} \)
+    <br>
+    \( \phi_{11} = \sqrt{\tfrac{1}{1+K_+^2}}, \quad \phi_{21} = \mathrm{sign}(K_+)\sqrt{1-\phi_{11}^2};
+    \qquad
+    \phi_{12} = \sqrt{\tfrac{1}{1+K_-^2}}, \quad \phi_{22} = \mathrm{sign}(K_-)\sqrt{1-\phi_{12}^2} \)
+    &nbsp;&mdash;&nbsp; and multiplying either column by \(-1\) is still a solution (faint arrows).
+  </div>
+
+  <div class="pb-controls">
+    <fieldset>
+      <legend>Population &Sigma;</legend>
+      <div class="pb-srow"><span class="lab">\(\sigma_x\)</span><input type="range" id="pb-sx" min="0.3" max="2.5" step="0.05" value="1.8"><span class="val" id="pb-sxv">1.80</span></div>
+      <div class="pb-srow"><span class="lab">\(\sigma_y\)</span><input type="range" id="pb-sy" min="0.3" max="2.5" step="0.05" value="1"><span class="val" id="pb-syv">1.00</span></div>
+      <div class="pb-srow"><span class="lab">\(r\)</span><input type="range" id="pb-r" min="-0.95" max="0.95" step="0.05" value="0.6"><span class="val" id="pb-rv">0.60</span></div>
+    </fieldset>
+    <fieldset>
+      <legend>Sample</legend>
+      <div class="pb-srow"><span class="lab">n</span><input type="range" id="pb-n" min="10" max="500" step="10" value="200"><span class="val" id="pb-nv">200</span></div>
+      <div class="pb-row"><button id="pb-resample">resample</button></div>
+    </fieldset>
+    <fieldset>
+      <legend>Your direction \(\phi(\theta) = (\cos\theta, \sin\theta)\)</legend>
+      <div class="pb-srow"><span class="lab">\(\theta\)</span><input type="range" id="pb-th" min="0" max="180" step="1" value="30" style="width:260px"><span class="val" id="pb-thv">30&deg;</span></div>
+    </fieldset>
+  </div>
+
+  <div class="pb-mats" id="pb-mats"></div>
+
+  <div class="pb-legend" id="pb-legend"></div>
+
+  <div class="pb-main">
+    <div class="pb-stage" id="pb-stage"><svg></svg></div>
+    <div class="pb-side">
+      <!-- Commented out 2026-11-16 to avoid confusion (the curve shows phi_2 at the MINIMUM of the variance).
+           To restore: uncomment these three lines and the renderCurve / renderVals calls in renderAll().
+      <div class="ttl">projected variance \(\phi(\theta)^\top \Sigma\, \phi(\theta)\) vs direction \(\theta\)</div>
+      <svg id="pb-curve"></svg>
+      <table class="pb-vals" id="pb-vals"></table>
+      -->
+      <div class="pb-note" id="pb-note"></div>
+    </div>
+  </div>
+  <div class="pb-cap" id="pb-cap"></div>
+
+<script>
+"use strict";
+
+// =====================================================================
+// ---- DATA (swap here) ----
+// Everything is synthetic, generated live from the sliders with a seeded
+// RNG: x = sigma_x z1, y = sigma_y (r z1 + sqrt(1-r^2) z2) has covariance
+// exactly Sigma. A pool of POOL draws is kept so the n slider gives
+// nested samples; "resample" advances the seed. The sample is centered
+// (the notes' "we center so mu = 0") before C is computed.
+// =====================================================================
+const POOL = 500;
+const state = { sx: 1.8, sy: 1.0, r: 0.6, n: 200, seed: 1, theta: Math.PI / 6 };
+
+let zpool = null;
+function refreshPool() {
+  const g = d3.randomNormal.source(d3.randomLcg(0.077 + 0.013 * state.seed))(0, 1);
+  zpool = d3.range(POOL).map(() => [g(), g()]);
+}
+function sample() {                          // centered n draws from N(0, Sigma)
+  const { sx, sy, r, n } = state;
+  const q = Math.sqrt(1 - r * r);
+  const pts = zpool.slice(0, n).map(([z1, z2]) => [sx * z1, sy * (r * z1 + q * z2)]);
+  const mx = d3.mean(pts, p => p[0]), my = d3.mean(pts, p => p[1]);
+  return pts.map(p => [p[0] - mx, p[1] - my]);
+}
+function sampleC(pts) {                      // C_jk = (1/n) sum X_ij X_ik
+  const n = pts.length;
+  let c11 = 0, c12 = 0, c22 = 0;
+  for (const [x, y] of pts) { c11 += x * x; c12 += x * y; c22 += y * y; }
+  return { a: c11 / n, b: c12 / n, c: c22 / n };
+}
+
+// =====================================================================
+// The boxed closed form (a = Sigma11, b = Sigma12, c = Sigma22)
+// =====================================================================
+function closedForm(a, b, c) {
+  const disc = Math.sqrt((a - c) ** 2 + 4 * b * b);
+  const l1 = (a + c + disc) / 2, l2 = (a + c - disc) / 2;
+  if (Math.abs(b) < 1e-10) {                 // r = 0: K undefined, PCs are the axes
+    return a >= c
+      ? { l1, l2, phi1: [1, 0], phi2: [0, 1], K1: null, K2: null }
+      : { l1, l2, phi1: [0, 1], phi2: [1, 0], K1: null, K2: null };
+  }
+  const K1 = (c - a + disc) / (2 * b), K2 = (c - a - disc) / (2 * b);
+  const p11 = Math.sqrt(1 / (1 + K1 * K1)), p21 = Math.sign(K1) * Math.sqrt(1 - p11 * p11);
+  const p12 = Math.sqrt(1 / (1 + K2 * K2)), p22 = Math.sign(K2) * Math.sqrt(1 - p12 * p12);
+  return { l1, l2, phi1: [p11, p21], phi2: [p12, p22], K1, K2 };
+}
+function sigma() {
+  const { sx, sy, r } = state;
+  return { a: sx * sx, b: r * sx * sy, c: sy * sy };
+}
+function projVar(M, th) {                    // phi(theta)' M phi(theta)
+  const cs = Math.cos(th), sn = Math.sin(th);
+  return M.a * cs * cs + 2 * M.b * cs * sn + M.c * sn * sn;
+}
+
+// =====================================================================
+// Rendering
+// =====================================================================
+const stage = document.getElementById("pb-stage");
+const svg = d3.select(stage.querySelector("svg"));
+const MAR = { l: 46, r: 14, t: 12, b: 40 };
+const DOM = [-8, 8];
+const CP1 = "#e15759", CP2 = "#4e79a7", CDIR = "#f4a300", CSAMP = "#333";
+const fmt2 = v => v.toFixed(2), fmt3 = v => v.toFixed(3);
+
+function typeset(els) {
+  if (window.MathJax && MathJax.typesetPromise) MathJax.typesetPromise(els).catch(() => {});
+}
+function addLabel(cls, latex, left, top) {
+  const sp = document.createElement("span");
+  sp.className = cls;
+  sp.style.left = left + "px"; sp.style.top = top + "px";
+  sp.innerHTML = latex;
+  stage.appendChild(sp);
+  typeset([sp]);
+  return sp;
+}
+
+function arrow(g, xs, ys, v, len, color, opts) {
+  const o = opts || {};
+  const x2 = xs(v[0] * len), y2 = ys(v[1] * len);
+  const ang = Math.atan2(y2 - ys(0), x2 - xs(0));
+  g.append("line").attr("x1", xs(0)).attr("y1", ys(0)).attr("x2", x2).attr("y2", y2)
+    .attr("stroke", color).attr("stroke-width", o.w || 3)
+    .attr("stroke-dasharray", o.dash || null).attr("opacity", o.op || 1);
+  if (!o.noHead) {
+    const hl = 9;
+    g.append("path")
+      .attr("d", `M${x2},${y2} L${x2 - hl * Math.cos(ang - 0.42)},${y2 - hl * Math.sin(ang - 0.42)}` +
+                 ` L${x2 - hl * Math.cos(ang + 0.42)},${y2 - hl * Math.sin(ang + 0.42)} Z`)
+      .attr("fill", color).attr("opacity", o.op || 1);
+  }
+}
+
+let scat = null;
+function renderScatter() {
+  svg.selectAll("*").remove();
+  for (const el of stage.querySelectorAll(".axl, .axl-y")) el.remove();
+  const W = 540, H = 540; svg.attr("width", W).attr("height", H);
+  const cw = W - MAR.l - MAR.r, ch = H - MAR.t - MAR.b;
+  const g = svg.append("g").attr("transform", `translate(${MAR.l},${MAR.t})`);
+  const xs = d3.scaleLinear().domain(DOM).range([0, cw]);
+  const ys = d3.scaleLinear().domain(DOM).range([ch, 0]);
+  scat = { xs, ys };
+  svg.append("clipPath").attr("id", "pb-clip").append("rect").attr("width", cw).attr("height", ch);
+  const gc = g.append("g").attr("clip-path", "url(#pb-clip)");
+
+  const S = sigma(), cf = closedForm(S.a, S.b, S.c);
+  const pts = sample();
+  const C = sampleC(pts);
+  const cfS = closedForm(C.a, C.b, C.c);     // the SAME boxed formula, fed C
+
+  // population 1s/2s ellipses (rotate by PC1 angle, radii sqrt(lambda))
+  const angDeg = -Math.atan2(cf.phi1[1], cf.phi1[0]) * 180 / Math.PI;
+  for (const k of [1, 2]) {
+    gc.append("ellipse")
+      .attr("rx", Math.abs(xs(k * Math.sqrt(cf.l1)) - xs(0)))
+      .attr("ry", Math.abs(ys(k * Math.sqrt(cf.l2)) - ys(0)))
+      .attr("transform", `translate(${xs(0)},${ys(0)}) rotate(${angDeg})`)
+      .attr("fill", "none").attr("stroke", "#9e9e9e")
+      .attr("stroke-width", k === 1 ? 1.6 : 1).attr("stroke-dasharray", "5,3");
+  }
+  // points
+  for (const p of pts) {
+    gc.append("circle").attr("cx", xs(p[0])).attr("cy", ys(p[1])).attr("r", 2.6)
+      .attr("fill", "#555").attr("opacity", 0.55);
+  }
+  // (removed 2026-11-16: the red projection dots, and the drop lines shown when n <= 80)
+  // const drop = pts.length <= 80;
+  // for (const p of pts) {
+  //   const t = p[0] * cf.phi1[0] + p[1] * cf.phi1[1];
+  //   if (drop) {
+  //     gc.append("line").attr("x1", xs(p[0])).attr("y1", ys(p[1]))
+  //       .attr("x2", xs(t * cf.phi1[0])).attr("y2", ys(t * cf.phi1[1]))
+  //       .attr("stroke", CP1).attr("stroke-width", 0.7).attr("opacity", 0.3);
+  //   }
+  //   gc.append("circle").attr("cx", xs(t * cf.phi1[0])).attr("cy", ys(t * cf.phi1[1]))
+  //     .attr("r", 1.8).attr("fill", CP1).attr("opacity", 0.5);
+  // }
+  // the direction phi(theta) set by the theta slider, drawn through the origin
+  const L = 6.4;
+  arrow(gc, xs, ys, [Math.cos(state.theta), Math.sin(state.theta)], L, CDIR, { w: 2.2 });
+  arrow(gc, xs, ys, [-Math.cos(state.theta), -Math.sin(state.theta)], L, CDIR, { w: 2.2, noHead: true, op: 0.45 });
+  // closed-form arrows (population), ghosts for the -phi solutions
+  arrow(gc, xs, ys, cf.phi1, Math.sqrt(cf.l1), CP1, { w: 3.4 });
+  arrow(gc, xs, ys, cf.phi2, Math.sqrt(cf.l2), CP2, { w: 3.4 });
+  arrow(gc, xs, ys, [-cf.phi1[0], -cf.phi1[1]], Math.sqrt(cf.l1), CP1, { w: 2, op: 0.25 });
+  arrow(gc, xs, ys, [-cf.phi2[0], -cf.phi2[1]], Math.sqrt(cf.l2), CP2, { w: 2, op: 0.25 });
+  // sample arrows (dashed dark): the "pretend C = Sigma" check
+  // (removed from the picture 2026-11-16; uncomment to show the components estimated from the sample)
+  // arrow(gc, xs, ys, cfS.phi1, Math.sqrt(cfS.l1), CSAMP, { w: 1.8, dash: "6,4" });
+  // arrow(gc, xs, ys, cfS.phi2, Math.sqrt(cfS.l2), CSAMP, { w: 1.8, dash: "6,4" });
+
+  g.append("g").attr("transform", `translate(0,${ch})`).call(d3.axisBottom(xs).ticks(8).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  g.append("g").call(d3.axisLeft(ys).ticks(8).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  addLabel("axl axl-x", "\\(x\\)", MAR.l + cw / 2, H - 14);
+  addLabel("axl axl-y", "\\(y\\)", 4, MAR.t + ch / 2);
+
+  return { cf, cfS, C, S };
+}
+
+function renderCurve(cf, C, S) {
+  const W = 380, H = 230;
+  const svgC = d3.select("#pb-curve");
+  svgC.selectAll("*").remove();
+  svgC.attr("width", W).attr("height", H);
+  const mar = { l: 46, r: 12, t: 10, b: 32 };
+  const cw = W - mar.l - mar.r, ch = H - mar.t - mar.b;
+  const g = svgC.append("g").attr("transform", `translate(${mar.l},${mar.t})`);
+  const xs = d3.scaleLinear().domain([0, 180]).range([0, cw]);
+  const ymax = Math.max(cf.l1, projVar(C, Math.atan2(cf.phi1[1], cf.phi1[0]))) * 1.12;
+  const ys = d3.scaleLinear().domain([0, ymax]).range([ch, 0]);
+  const grid = d3.range(0, 180.5, 1);
+  // PC angle markers
+  let a1 = Math.atan2(cf.phi1[1], cf.phi1[0]) * 180 / Math.PI; if (a1 < 0) a1 += 180;
+  let a2 = Math.atan2(cf.phi2[1], cf.phi2[0]) * 180 / Math.PI; if (a2 < 0) a2 += 180;
+  g.append("line").attr("x1", xs(a1)).attr("x2", xs(a1)).attr("y1", 0).attr("y2", ch)
+    .attr("stroke", CP1).attr("stroke-width", 1.6).attr("stroke-dasharray", "4,3");
+  g.append("line").attr("x1", xs(a2)).attr("x2", xs(a2)).attr("y1", 0).attr("y2", ch)
+    .attr("stroke", CP2).attr("stroke-width", 1.6).attr("stroke-dasharray", "4,3");
+  // lambda guide lines
+  for (const [l, col] of [[cf.l1, CP1], [cf.l2, CP2]]) {
+    g.append("line").attr("x1", 0).attr("x2", cw).attr("y1", ys(l)).attr("y2", ys(l))
+      .attr("stroke", col).attr("stroke-width", 0.8).attr("opacity", 0.5);
+  }
+  // population (solid) and sample (dashed) curves
+  g.append("path")
+    .attr("d", d3.line().x(a => xs(a)).y(a => ys(projVar(S, a * Math.PI / 180)))(grid))
+    .attr("fill", "none").attr("stroke", "#333").attr("stroke-width", 2.2);
+  g.append("path")
+    .attr("d", d3.line().x(a => xs(a)).y(a => ys(projVar(C, a * Math.PI / 180)))(grid))
+    .attr("fill", "none").attr("stroke", "#999").attr("stroke-width", 1.6).attr("stroke-dasharray", "6,4");
+  // current theta
+  let td = state.theta * 180 / Math.PI; if (td < 0) td += 180;
+  g.append("circle").attr("cx", xs(td)).attr("cy", ys(projVar(S, state.theta))).attr("r", 5)
+    .attr("fill", CDIR).attr("stroke", "#fff").attr("stroke-width", 1.2);
+  g.append("g").attr("transform", `translate(0,${ch})`)
+    .call(d3.axisBottom(xs).tickValues([0, 45, 90, 135, 180]).tickFormat(d => d + "°").tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  g.append("g").call(d3.axisLeft(ys).ticks(5).tickSize(3))
+    .selectAll("text").attr("class", "ticktext");
+  svgC.append("text").attr("x", mar.l + cw / 2).attr("y", H - 4)
+    .attr("text-anchor", "middle").attr("font-size", 12).attr("fill", "#333").text("direction θ");
+}
+
+function renderVals(cf, cfS) {
+  const fmtK = K => (K === null ? "—" : fmt3(K));
+  const rows = [
+    ["λ₊ (= λ₁)", fmt3(cf.l1), fmt3(cfS.l1)],
+    ["λ₋ (= λ₂)", fmt3(cf.l2), fmt3(cfS.l2)],
+    ["K₊", fmtK(cf.K1), fmtK(cfS.K1)],
+    ["K₋", fmtK(cf.K2), fmtK(cfS.K2)],
+    ["φ₁ = (φ₁₁, φ₂₁)", `(${fmt2(cf.phi1[0])}, ${fmt2(cf.phi1[1])})`, `(${fmt2(cfS.phi1[0])}, ${fmt2(cfS.phi1[1])})`],
+    ["φ₂ = (φ₁₂, φ₂₂)", `(${fmt2(cf.phi2[0])}, ${fmt2(cf.phi2[1])})`, `(${fmt2(cfS.phi2[0])}, ${fmt2(cfS.phi2[1])})`],
+    ["var. explained λ₁/(λ₁+λ₂)", (100 * cf.l1 / (cf.l1 + cf.l2)).toFixed(1) + "%", (100 * cfS.l1 / (cfS.l1 + cfS.l2)).toFixed(1) + "%"],
+  ];
+  document.getElementById("pb-vals").innerHTML =
+    `<tr><th></th><th>closed form on Σ</th><th>same formula on C</th></tr>` +
+    rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join("");
+}
+
+// Double-buffered live LaTeX: the new TeX is typeset in a hidden child and swapped in when
+// ready, so the matrices never flash raw source while a slider moves.
+function MathSlot(el) {
+  this.a = document.createElement("span"); this.b = document.createElement("span");
+  MathSlot.hide(this.b); el.append(this.a, this.b);
+  this.showA = true; this.cur = null; this.pending = null; this.timer = null;
+}
+MathSlot.hide = el => { Object.assign(el.style, { visibility: "hidden", position: "absolute", left: "0", top: "0", whiteSpace: "nowrap", pointerEvents: "none" }); el.setAttribute("aria-hidden", "true"); };
+MathSlot.show = el => { Object.assign(el.style, { visibility: "", position: "", left: "", top: "", whiteSpace: "", pointerEvents: "" }); el.removeAttribute("aria-hidden"); };
+MathSlot.prototype.set = function (tex) {
+  if (tex === this.cur && this.pending == null) return;
+  this.pending = tex;
+  if (this.timer) return;
+  this.timer = setTimeout(() => { this.timer = null; this.flush(); }, 60);
+};
+MathSlot.prototype.flush = function () {
+  const tex = this.pending; this.pending = null;
+  if (tex == null || tex === this.cur) return;
+  this.cur = tex;
+  const hidden = this.showA ? this.b : this.a, vis = this.showA ? this.a : this.b;
+  hidden.textContent = tex; this.showA = !this.showA;
+  const ready = (window.MathJax && MathJax.startup && MathJax.startup.promise) || Promise.resolve();
+  window.__mjChain = (window.__mjChain || ready)
+    .then(() => (window.MathJax && MathJax.typesetPromise) ? MathJax.typesetPromise([hidden]) : null)
+    .catch(() => {})
+    .then(() => { MathSlot.show(hidden); MathSlot.hide(vis); vis.textContent = ""; });
+};
+let matSlot = null;
+
+function renderMats(C, S) {
+  if (!matSlot) matSlot = new MathSlot(document.getElementById("pb-mats"));
+  const mat = M => `\\begin{bmatrix} ${fmt2(M.a)} & ${fmt2(M.b)} \\\\ ${fmt2(M.b)} & ${fmt2(M.c)} \\end{bmatrix}`;
+  matSlot.set(`\\( \\underbrace{\\Sigma = ${mat(S)}}_{\\text{population (sliders)}} ` +
+    `\\quad \\approx \\quad \\underbrace{C = ${mat(C)}}_{\\text{sample, } n = ${state.n}} \\)`);
+}
+
+function renderMeta(cf, C, S) {
+  document.getElementById("pb-legend").innerHTML =
+    `<span class="ln" style="border-color:${CP1}"></span>first principal component` +
+    `<span class="ln" style="border-color:${CP2}"></span>second principal component` +
+    `<span class="ln" style="border-color:${CDIR}"></span>your direction (θ slider)` +
+    `<span class="ln dash" style="border-color:#9e9e9e"></span>1 and 2 standard deviation ellipses`;
+  const th = state.theta;
+  const vpop = projVar(S, th), vsam = projVar(C, th);
+  const degen = Math.abs(cf.l1 - cf.l2) < 1e-3;
+  // green once the variance is within 1% of the largest possible value, lambda_1
+  const near = vpop >= 0.99 * cf.l1;
+  document.getElementById("pb-note").innerHTML =
+    `The variance of your direction: <b style="${near ? "color:#1a8a3a" : ""}">${fmt3(vpop)}</b>` +
+    (degen ? `<br><b>λ₁ = λ₂:</b> the ellipse is a circle, so every direction has the same variance.` : "");
+  document.getElementById("pb-cap").innerHTML = ``;
+    // `The arrows are the boxed formulas, live: as \\(r\\) grows the ellipse tilts and PC1 rotates toward ` +
+    // `the diagonal; at \\(r = 0\\) the \\(K_\\pm\\) formula degenerates (division by \\(2r\\sigma_x\\sigma_y\\)) ` +
+    // `and the PCs are just the coordinate axes, ordered by variance. The two curves on the right — ` +
+    // `population \\(\\phi^\\top\\Sigma\\phi\\) (solid) and sample \\(\\phi^\\top C\\phi\\) (dashed) — peak at ` +
+    // `\\(\\lambda_1\\) in the direction \\(\\phi_1\\) and bottom out at \\(\\lambda_2\\) in the direction ` +
+    // `\\(\\phi_2\\), always 90° apart. Push \\(n\\) down to 10 and resample a few times: the dashed sample ` +
+    // `arrows wobble around the closed form — "pretend they are equal" is an approximation that improves with \\(n\\).`;
+  typeset([document.getElementById("pb-cap")]);
+}
+
+// =====================================================================
+// Wiring
+// =====================================================================
+function renderAll() {
+  const { cf, cfS, C, S } = renderScatter();
+  // renderCurve(cf, C, S);      // graph commented out in the HTML (see .pb-side)
+  // renderVals(cf, cfS);        // table commented out in the HTML
+  renderMats(C, S);
+  renderMeta(cf, C, S);
+  window.__pbGeom = { cf, cfS, C, S };
+}
+
+function main() {
+  if (main.done) return;                     // jsdom fires load twice
+  main.done = true;
+  refreshPool();
+  const bind = (id, key, valId, fmt) => {
+    const el = document.getElementById(id);
+    el.addEventListener("input", () => {
+      state[key] = +el.value;
+      document.getElementById(valId).textContent = fmt(+el.value);
+      renderAll();
+    });
+  };
+  bind("pb-sx", "sx", "pb-sxv", fmt2);
+  bind("pb-sy", "sy", "pb-syv", fmt2);
+  bind("pb-r", "r", "pb-rv", fmt2);
+  bind("pb-n", "n", "pb-nv", v => v.toFixed(0));
+  const thEl = document.getElementById("pb-th");          // slider is in degrees, state.theta in radians
+  thEl.addEventListener("input", () => {
+    state.theta = +thEl.value * Math.PI / 180;
+    document.getElementById("pb-thv").textContent = thEl.value + "\u00b0";
+    renderAll();
+  });
+  document.getElementById("pb-resample").addEventListener("click", () => {
+    state.seed++; refreshPool(); renderAll();
+  });
+  renderAll();
+
+  window.__pbApi = {
+    set: (k, v) => { state[k] = v; renderAll(); },
+    setTheta: th => {
+      state.theta = th; const deg = Math.round(th * 180 / Math.PI);
+      document.getElementById("pb-th").value = deg; document.getElementById("pb-thv").textContent = deg + "\u00b0";
+      renderAll();
+    },
+    resample: () => { state.seed++; refreshPool(); renderAll(); },
+    closedForm, sigma, sampleC, sample, projVar, state,
+  };
+}
+window.addEventListener("load", main);
+</script>
+
+<!--
+  HOW IT WORKS (matches the course notes)
+  - Sigma = [[sx^2, r sx sy],[r sx sy, sy^2]]; the boxed closed form:
+    lambda_pm = (sx^2 + sy^2 pm sqrt((sx^2-sy^2)^2 + 4 r^2 sx^2 sy^2))/2,
+    K_pm = (sy^2 - sx^2 pm sqrt(...))/(2 r sx sy),
+    phi11 = sqrt(1/(1+K+^2)), phi21 = sign(K+) sqrt(1-phi11^2), etc.
+    K+ K- = -1 always, so phi1 . phi2 = 0 (orthogonal); phi11, phi12 >= 0
+    by construction and each column times -1 is drawn as a faint ghost.
+  - r = 0 degenerates K (division by 2 r sx sy): PCs fall back to the
+    coordinate axes ordered by variance; sx = sy and r = 0 makes
+    lambda1 = lambda2 (circle) - flagged in the readout.
+  - Sample: x = sx z1, y = sy (r z1 + sqrt(1-r^2) z2) gives cov exactly
+    Sigma; the sample is centered, then C_jk = (1/n) sum X_ij X_ik (the
+    notes' definition). The SAME closed form applied to C gives the
+    dashed sample arrows - the notes' "pretend they are equal" step.
+  - Projected variance of a unit direction phi(theta):
+    phi' M phi = M11 cos^2 + 2 M12 cos sin + M22 sin^2, plotted over
+    theta in [0, 180); maximum lambda1 at phi1, minimum lambda2 at phi2.
+  - Directions are lines, not rays, so the theta slider runs over 0 to 180 degrees.
+
+  SOURCES (kept in source; not displayed in the applet UI)
+  - Course notes: bivariate density, C_jk = (1/n) sum X_ij X_ik ~ E[XjXk],
+    the eigen system and its boxed solution, and the sign-flip remark.
+  - All data is synthetic (seeded); no empirical datasets.
+-->
+</body>
+</html>
