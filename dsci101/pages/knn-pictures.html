@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>K-Nearest Neighbors</title>
+  <link rel="stylesheet" href="../styling/global.css">
+  <!--
+    SOURCES (kept in source; not displayed in the applet UI)
+    - Penguins : palmerpenguins (Gorman, Williams & Fraser 2014), datasets/penguins.csv
+                 (342 birds with both measurements; columns bill length, flipper length, species)
+    - Cars     : ISLR Auto (1970-82), datasets/auto_mpg.csv (392 cars; weight, horsepower, mpg)
+    HOW "NEAREST" IS MEASURED: with two features each one is z-scored first, and the plot
+    is drawn with the same number of standard deviations per pixel on both axes. So the
+    nearest dots on the screen ARE the nearest neighbours and the reach is a true circle.
+    TIES: equal distances are broken by row order. A tied vote goes to the tied class
+    that has the single closest neighbour.
+    The last slider stop ("all") uses every case, so the guess is the same everywhere.
+  -->
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; color: #222; }
+    h1 { font-size: 24px; margin-bottom: 6px; }
+    .kn-wrap { max-width: 640px; }
+    .kn-lead { font-size: 15px; margin: 0 0 12px 0; }
+    .kn-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0; }
+    .kn-row button { font-size: 15px; font-weight: bold; padding: 7px 14px; border-radius: 6px;
+                     border: 1px solid #999; background: #f5f5f5; cursor: pointer; }
+    .kn-row button:hover { background: #ebebeb; }
+    .kn-row button.on { background: #0072BD; border-color: #0072BD; color: #fff; }
+    .kn-gap { width: 14px; }
+    .kn-k { font-size: 16px; }
+    .kn-k b { display: inline-block; min-width: 5.2em; }
+    .kn-k input { width: 260px; vertical-align: middle; }
+    .kn-all { font-size: 15px; cursor: pointer; }
+    .kn-q { font-size: 17px; font-weight: bold; margin: 14px 0 4px 0; }
+    .kn-legend { font-size: 14.5px; margin: 6px 0 4px 0; display: flex; flex-wrap: wrap; gap: 4px 20px; min-height: 1.3em; }
+    .kn-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px;
+                   vertical-align: -1px; box-sizing: border-box; }
+    svg { display: block; max-width: 100%; height: auto; }
+    #stage svg { touch-action: none; cursor: pointer; }
+    .tick text { font-size: 11px; fill: #555; }
+    .axt { fill: #333; }
+    .kn-ans { min-height: 118px; margin-top: 6px; font-size: 16px; }
+    .kn-ans-t { margin-bottom: 6px; }
+    .kn-votes { display: flex; height: 20px; }
+    .kn-votes span { flex: 1 1 0; max-width: 26px; }
+    .kn-tally { font-size: 14.5px; margin: 6px 0; display: flex; flex-wrap: wrap; gap: 4px 18px; }
+    .kn-tally i { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: -1px; }
+    .kn-guess { font-size: 20px; }
+    .kn-guess .tie { font-size: 14.5px; color: #555; margin-left: 8px; }
+    .kn-striplab { font-size: 14.5px; color: #333; margin-top: 8px; }
+  </style>
+  <script src="https://d3js.org/d3.v7.js"></script>
+</head>
+<body>
+<div class="kn-wrap">
+  <h1>K Nearest Neighbors in Pictures</h1>
+  <!-- <p class="kn-lead">To guess about something new, find the <b>k</b> most similar cases you have
+    already seen, and copy them.</p> -->
+
+  <div class="kn-row"><span id="task" class="kn-row" style="margin:0"></span><span class="kn-gap"></span><span id="dims" class="kn-row" style="margin:0"></span></div>
+
+  <div class="kn-row kn-k">
+    <label for="k"><b id="kval"></b></label>
+    <input type="range" id="k" min="0" step="1">
+  </div>
+  <div class="kn-row"><label class="kn-all"><input type="checkbox" id="all"> <span id="alllab"></span></label></div>
+
+  <div class="kn-q" id="q"></div>
+  <div class="kn-legend" id="legend"></div>
+  <div id="stage"></div>
+  <div class="kn-ans" id="ans"></div>
+</div>
+
+<script>
+// ---- DATA (swap here) --------------------------------------------------------
+// Real measurements. PENGUINS rows: [bill length mm, flipper length mm, species index].
+// CARS rows: [weight lb, horsepower, miles per gallon].
+const PENGUINS = [[39.1,181,0],[39.5,186,0],[40.3,195,0],[36.7,193,0],[39.3,190,0],[38.9,181,0],[39.2,195,0],[34.1,193,0],[42,190,0],[37.8,186,0],[37.8,180,0],[41.1,182,0],[38.6,191,0],[34.6,198,0],[36.6,185,0],[38.7,195,0],[42.5,197,0],[34.4,184,0],[46,194,0],[37.8,174,0],[37.7,180,0],[35.9,189,0],[38.2,185,0],[38.8,180,0],[35.3,187,0],[40.6,183,0],[40.5,187,0],[37.9,172,0],[40.5,180,0],[39.5,178,0],[37.2,178,0],[39.5,188,0],[40.9,184,0],[36.4,195,0],[39.2,196,0],[38.8,190,0],[42.2,180,0],[37.6,181,0],[39.8,184,0],[36.5,182,0],[40.8,195,0],[36,186,0],[44.1,196,0],[37,185,0],[39.6,190,0],[41.1,182,0],[37.5,179,0],[36,190,0],[42.3,191,0],[39.6,186,0],[40.1,188,0],[35,190,0],[42,200,0],[34.5,187,0],[41.4,191,0],[39,186,0],[40.6,193,0],[36.5,181,0],[37.6,194,0],[35.7,185,0],[41.3,195,0],[37.6,185,0],[41.1,192,0],[36.4,184,0],[41.6,192,0],[35.5,195,0],[41.1,188,0],[35.9,190,0],[41.8,198,0],[33.5,190,0],[39.7,190,0],[39.6,196,0],[45.8,197,0],[35.5,190,0],[42.8,195,0],[40.9,191,0],[37.2,184,0],[36.2,187,0],[42.1,195,0],[34.6,189,0],[42.9,196,0],[36.7,187,0],[35.1,193,0],[37.3,191,0],[41.3,194,0],[36.3,190,0],[36.9,189,0],[38.3,189,0],[38.9,190,0],[35.7,202,0],[41.1,205,0],[34,185,0],[39.6,186,0],[36.2,187,0],[40.8,208,0],[38.1,190,0],[40.3,196,0],[33.1,178,0],[43.2,192,0],[35,192,0],[41,203,0],[37.7,183,0],[37.8,190,0],[37.9,193,0],[39.7,184,0],[38.6,199,0],[38.2,190,0],[38.1,181,0],[43.2,197,0],[38.1,198,0],[45.6,191,0],[39.7,193,0],[42.2,197,0],[39.6,191,0],[42.7,196,0],[38.6,188,0],[37.3,199,0],[35.7,189,0],[41.1,189,0],[36.2,187,0],[37.7,198,0],[40.2,176,0],[41.4,202,0],[35.2,186,0],[40.6,199,0],[38.8,191,0],[41.5,195,0],[39,191,0],[44.1,210,0],[38.5,190,0],[43.1,197,0],[36.8,193,0],[37.5,199,0],[38.1,187,0],[41.1,190,0],[35.6,191,0],[40.2,200,0],[37,185,0],[39.7,193,0],[40.2,193,0],[40.6,187,0],[32.1,188,0],[40.7,190,0],[37.3,192,0],[39,185,0],[39.2,190,0],[36.6,184,0],[36,195,0],[37.8,193,0],[36,187,0],[41.5,201,0],[46.1,211,2],[50,230,2],[48.7,210,2],[50,218,2],[47.6,215,2],[46.5,210,2],[45.4,211,2],[46.7,219,2],[43.3,209,2],[46.8,215,2],[40.9,214,2],[49,216,2],[45.5,214,2],[48.4,213,2],[45.8,210,2],[49.3,217,2],[42,210,2],[49.2,221,2],[46.2,209,2],[48.7,222,2],[50.2,218,2],[45.1,215,2],[46.5,213,2],[46.3,215,2],[42.9,215,2],[46.1,215,2],[44.5,216,2],[47.8,215,2],[48.2,210,2],[50,220,2],[47.3,222,2],[42.8,209,2],[45.1,207,2],[59.6,230,2],[49.1,220,2],[48.4,220,2],[42.6,213,2],[44.4,219,2],[44,208,2],[48.7,208,2],[42.7,208,2],[49.6,225,2],[45.3,210,2],[49.6,216,2],[50.5,222,2],[43.6,217,2],[45.5,210,2],[50.5,225,2],[44.9,213,2],[45.2,215,2],[46.6,210,2],[48.5,220,2],[45.1,210,2],[50.1,225,2],[46.5,217,2],[45,220,2],[43.8,208,2],[45.5,220,2],[43.2,208,2],[50.4,224,2],[45.3,208,2],[46.2,221,2],[45.7,214,2],[54.3,231,2],[45.8,219,2],[49.8,230,2],[46.2,214,2],[49.5,229,2],[43.5,220,2],[50.7,223,2],[47.7,216,2],[46.4,221,2],[48.2,221,2],[46.5,217,2],[46.4,216,2],[48.6,230,2],[47.5,209,2],[51.1,220,2],[45.2,215,2],[45.2,223,2],[49.1,212,2],[52.5,221,2],[47.4,212,2],[50,224,2],[44.9,212,2],[50.8,228,2],[43.4,218,2],[51.3,218,2],[47.5,212,2],[52.1,230,2],[47.5,218,2],[52.2,228,2],[45.5,212,2],[49.5,224,2],[44.5,214,2],[50.8,226,2],[49.4,216,2],[46.9,222,2],[48.4,203,2],[51.1,225,2],[48.5,219,2],[55.9,228,2],[47.2,215,2],[49.1,228,2],[47.3,216,2],[46.8,215,2],[41.7,210,2],[53.4,219,2],[43.3,208,2],[48.1,209,2],[50.5,216,2],[49.8,229,2],[43.5,213,2],[51.5,230,2],[46.2,217,2],[55.1,230,2],[44.5,217,2],[48.8,222,2],[47.2,214,2],[46.8,215,2],[50.4,222,2],[45.2,212,2],[49.9,213,2],[46.5,192,1],[50,196,1],[51.3,193,1],[45.4,188,1],[52.7,197,1],[45.2,198,1],[46.1,178,1],[51.3,197,1],[46,195,1],[51.3,198,1],[46.6,193,1],[51.7,194,1],[47,185,1],[52,201,1],[45.9,190,1],[50.5,201,1],[50.3,197,1],[58,181,1],[46.4,190,1],[49.2,195,1],[42.4,181,1],[48.5,191,1],[43.2,187,1],[50.6,193,1],[46.7,195,1],[52,197,1],[50.5,200,1],[49.5,200,1],[46.4,191,1],[52.8,205,1],[40.9,187,1],[54.2,201,1],[42.5,187,1],[51,203,1],[49.7,195,1],[47.5,199,1],[47.6,195,1],[52,210,1],[46.9,192,1],[53.5,205,1],[49,210,1],[46.2,187,1],[50.9,196,1],[45.5,196,1],[50.9,196,1],[50.8,201,1],[50.1,190,1],[49,212,1],[51.5,187,1],[49.8,198,1],[48.1,199,1],[51.4,201,1],[45.7,193,1],[50.7,203,1],[42.5,187,1],[52.2,197,1],[45.2,191,1],[49.3,203,1],[50.2,202,1],[45.6,194,1],[51.9,206,1],[46.8,189,1],[45.7,195,1],[55.8,207,1],[43.5,202,1],[49.6,193,1],[50.8,210,1],[50.2,198,1]];
+const CARS = [[3504,130,18],[3693,165,15],[3436,150,18],[3433,150,16],[3449,140,17],[4341,198,15],[4354,220,14],[4312,215,14],[4425,225,14],[3850,190,15],[3563,170,15],[3609,160,14],[3761,150,15],[3086,225,14],[2372,95,24],[2833,95,22],[2774,97,18],[2587,85,21],[2130,88,27],[1835,46,26],[2672,87,25],[2430,90,24],[2375,95,25],[2234,113,26],[2648,90,21],[4615,215,10],[4376,200,10],[4382,210,11],[4732,193,9],[2130,88,27],[2264,90,28],[2228,95,25],[2634,100,19],[3439,105,16],[3329,100,17],[3302,88,19],[3288,100,18],[4209,165,14],[4464,175,14],[4154,153,14],[4096,150,14],[4955,180,12],[4746,170,13],[5140,175,13],[2962,110,18],[2408,72,22],[3282,100,19],[3139,88,18],[2220,86,23],[2123,90,28],[2074,70,30],[2065,76,30],[1773,65,31],[1613,69,35],[1834,60,27],[1955,70,26],[2278,95,24],[2126,80,25],[2254,54,23],[2408,90,20],[2226,86,21],[4274,165,13],[4385,175,14],[4135,150,15],[4129,153,14],[3672,150,17],[4633,208,11],[4502,155,13],[4456,160,12],[4422,190,13],[2330,97,19],[3892,150,15],[4098,130,13],[4294,140,13],[4077,150,14],[2933,112,18],[2511,76,22],[2979,87,21],[2189,69,26],[2395,86,22],[2288,92,28],[2506,97,23],[2164,80,28],[2100,88,27],[4100,175,13],[3672,150,14],[3988,145,13],[4042,137,14],[3777,150,15],[4952,198,12],[4464,150,13],[4363,158,13],[4237,150,14],[4735,215,13],[4951,225,12],[3821,175,13],[3121,105,18],[3278,100,16],[2945,100,18],[3021,88,18],[2904,95,23],[1950,46,26],[4997,150,11],[4906,167,12],[4654,170,13],[4499,180,12],[2789,100,18],[2279,88,20],[2401,72,21],[2379,94,22],[2124,90,18],[2310,85,19],[2472,107,21],[2265,90,26],[4082,145,15],[4278,230,16],[1867,49,29],[2158,75,24],[2582,91,20],[2868,112,19],[3399,150,15],[2660,110,24],[2807,122,20],[3664,180,11],[3102,95,20],[2901,100,19],[3336,100,15],[1950,67,31],[2451,80,26],[1836,65,32],[2542,75,25],[3781,100,16],[3632,110,16],[3613,105,18],[4141,140,16],[4699,150,13],[4457,150,14],[4638,140,14],[4257,150,14],[2219,83,29],[1963,67,26],[2300,78,26],[1649,52,31],[2003,61,32],[2125,75,28],[2108,75,24],[2246,75,26],[2489,97,24],[2391,93,26],[2000,67,31],[3264,95,19],[3459,105,18],[3432,72,15],[3158,72,15],[4668,170,16],[4440,145,15],[4498,150,16],[4657,148,14],[3907,110,17],[3897,105,16],[3730,110,15],[3785,95,18],[3039,110,21],[3221,110,20],[3169,129,13],[2171,75,29],[2639,83,23],[2914,100,20],[2592,78,23],[2702,96,24],[2223,71,25],[2545,97,24],[2984,97,18],[1937,70,29],[3211,90,19],[2694,95,23],[2957,88,23],[2945,98,22],[2671,115,25],[1795,53,33],[2464,86,28],[2220,81,25],[2572,92,25],[2255,79,26],[2202,83,27],[4215,140,17.5],[4190,150,16],[3962,120,15.5],[4215,152,14.5],[3233,100,22],[3353,105,22],[3012,81,24],[3085,90,22.5],[2035,52,29],[2164,60,24.5],[1937,70,29],[1795,53,33],[3651,100,20],[3574,78,18],[3645,110,18.5],[3193,95,17.5],[1825,71,29.5],[1990,70,32],[2155,75,28],[2565,72,26.5],[3150,102,20],[3940,150,13],[3270,88,19],[2930,108,19],[3820,120,16.5],[4380,180,16.5],[4055,145,13],[3870,130,13],[3755,150,13],[2045,68,31.5],[2155,80,30],[1825,58,36],[2300,96,25.5],[1945,70,33.5],[3880,145,17.5],[4060,110,17],[4140,145,15.5],[4295,130,15],[3520,110,17.5],[3425,105,20.5],[3630,100,19],[3525,98,18.5],[4220,180,16],[4165,170,15.5],[4325,190,15.5],[4335,149,16],[1940,78,29],[2740,88,24.5],[2265,75,26],[2755,89,25.5],[2051,63,30.5],[2075,83,33.5],[1985,67,30],[2190,78,30.5],[2815,97,22],[2600,110,21.5],[2720,110,21.5],[1985,48,43.1],[1800,66,36.1],[1985,52,32.8],[2070,70,39.4],[1800,60,36.1],[3365,110,19.9],[3735,140,19.4],[3570,139,20.2],[3535,105,19.2],[3155,95,20.5],[2965,85,20.2],[2720,88,25.1],[3430,100,20.5],[3210,90,19.4],[3380,105,20.6],[3070,85,20.8],[3620,110,18.6],[3410,120,18.1],[3425,145,19.2],[3445,165,17.7],[3205,139,18.1],[4080,140,17.5],[2155,68,30],[2560,95,27.5],[2300,97,27.2],[2230,75,30.9],[2515,95,21.1],[2745,105,23.2],[2855,85,23.8],[2405,97,23.9],[2830,103,20.3],[3140,125,17],[2795,115,21.6],[3410,133,16.2],[1990,71,31.5],[2135,68,29.5],[3245,115,21.5],[2990,85,19.8],[2890,88,22.3],[3265,90,20.2],[3360,110,20.6],[3840,130,17],[3725,129,17.6],[3955,138,16.5],[3830,135,18.2],[4360,155,16.9],[4054,142,15.5],[3605,125,19.2],[3940,150,18.5],[1925,71,31.9],[1975,65,34.1],[1915,80,35.7],[2670,80,27.4],[3530,77,25.4],[3900,125,23],[3190,71,27.2],[3420,90,23.9],[2200,70,34.2],[2150,70,34.5],[2020,65,31.8],[2130,69,37.3],[2670,90,28.4],[2595,115,28.8],[2700,115,26.8],[2556,90,33.5],[2144,76,41.5],[1968,60,38.1],[2120,70,32.1],[2019,65,37.2],[2678,90,28],[2870,88,26.4],[3003,90,24.3],[3381,90,19.1],[2188,78,34.3],[2711,90,29.8],[2542,75,31.3],[2434,92,37],[2265,75,32.2],[2110,65,46.6],[2800,105,27.9],[2110,65,40.8],[2085,48,44.3],[2335,48,43.4],[2950,67,36.4],[3250,67,30],[1850,67,44.6],[2145,67,33.8],[1845,62,29.8],[2910,132,32.7],[2420,100,23.7],[2500,88,35],[2290,72,32.4],[2490,84,27.2],[2635,84,26.6],[2620,92,25.8],[2725,110,23.5],[2385,84,30],[1755,58,39.1],[1875,64,39],[1760,60,35.1],[2065,67,32.3],[1975,65,37],[2050,62,37.7],[1985,68,34.1],[2215,63,34.7],[2045,65,34.4],[2380,65,29.9],[2190,74,33],[2210,75,33.7],[2350,75,32.4],[2615,100,32.9],[2635,74,31.6],[3230,80,28.1],[3160,76,30.7],[2900,116,25.4],[2930,120,24.2],[3415,110,22.4],[3725,105,26.6],[3060,88,20.2],[3465,85,17.6],[2605,88,28],[2640,88,27],[2395,88,34],[2575,85,31],[2525,84,29],[2735,90,27],[2865,92,24],[1980,74,36],[2025,68,37],[1970,68,31],[2125,63,38],[2125,70,36],[2160,88,36],[2205,75,36],[2245,70,34],[1965,67,38],[1965,67,32],[1995,67,38],[2945,110,25],[3015,85,38],[2585,92,26],[2835,112,22],[2665,96,32],[2370,84,36],[2950,90,27],[2790,86,27],[2130,52,44],[2295,84,32],[2625,79,28],[2720,82,31]];
+
+const SPECIES = ["Adelie", "Chinstrap", "Gentoo"];
+// One entry per picture. f = feature columns (x, then y), out = column to guess,
+// start = where the new case sits when the picture opens (in the features' own units).
+const VIEWS = {
+  cls1: { task: "cls", dim: 1, rows: PENGUINS, f: [0],    out: 2, classes: SPECIES, one: "penguin", many: "penguins",
+          axes: ["Bill length (mm)"], start: [45.6], ask: "Which species is the new penguin?" },
+  cls2: { task: "cls", dim: 2, rows: PENGUINS, f: [1, 0], out: 2, classes: SPECIES, one: "penguin", many: "penguins",
+          axes: ["Flipper length (mm)", "Bill length (mm)"], start: [200, 46.5], ask: "Which species is the new penguin?" },
+  reg1: { task: "reg", dim: 1, rows: CARS,     f: [0],    out: 2, one: "car", many: "cars", outName: "Miles per gallon", unit: "miles per gallon",
+          axes: ["Weight (lb)"], start: [3000], ask: "How many miles per gallon does the new car get?" },
+  reg2: { task: "reg", dim: 2, rows: CARS,     f: [0, 1], out: 2, one: "car", many: "cars", outName: "Miles per gallon", unit: "miles per gallon",
+          axes: ["Weight (lb)", "Horsepower"], start: [3000, 110], ask: "How many miles per gallon does the new car get?" }
+};
+const KS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 30, 50, 100, Infinity];   // slider stops (Infinity = every case)
+// ------------------------------------------------------------------------------
+
+const CLS_COL = ["#E67E00", "#8E44AD", "#0F8B8D"];     // one per class
+const ACCENT = "#D55E00";                               // the guess, when the guess is a number in 1 feature
+const NEUTRAL = "#5b7fa6";                              // a car, when color carries no meaning
+const W = 620, m = { t: 14, r: 16, b: 50, l: 62 }, PW = W - m.l - m.r;
+const R = 3.6, GRID = 140, KEEP = 100;                  // dot radius; resolution of the every-answer map; neighbours stored per map cell
+const S = { task: "cls", dim: 2, ki: 4, all: false };
+let V = null;                                           // the view being shown
+let L = {};                                             // d3 selections of the current picture
+let dragging = false;
+
+// ---- engine --------------------------------------------------------------------
+function prep(v) {
+  if (v.ready) return v;
+  const n = v.rows.length, J = d3.range(v.dim);
+  v.n = n;
+  v.X = v.rows.map(r => v.f.map(c => r[c]));
+  v.y = v.rows.map(r => r[v.out]);
+  v.mean = J.map(j => d3.mean(v.X, x => x[j]));
+  v.sd = J.map(j => d3.deviation(v.X, x => x[j]));
+  v.range = J.map(j => d3.extent(v.X, x => x[j]));
+  v.q = v.start.slice();
+  if (v.task === "reg") {
+    v.yRange = d3.extent(v.y);
+    v.color = d3.scaleSequential(d3.interpolateViridis).domain(v.yRange);
+  }
+  // window: in 2 features the same number of standard deviations per pixel on both axes
+  if (v.dim === 2) {
+    const z = J.map(j => v.range[j].map(x => (x - v.mean[j]) / v.sd[j]));
+    const half = 1.06 * d3.max(z, e => e[1] - e[0]) / 2;
+    v.dom = J.map(j => { const c = (z[j][0] + z[j][1]) / 2; return [c - half, c + half].map(t => v.mean[j] + v.sd[j] * t); });
+    v.PH = PW;
+  } else {
+    const pad = 0.04 * (v.range[0][1] - v.range[0][0]);
+    v.dom = [[v.range[0][0] - pad, v.range[0][1] + pad]];
+    v.PH = v.task === "reg" ? 380 : 250;
+  }
+  v.H = m.t + v.PH + m.b;
+  v.sx = d3.scaleLinear().domain(v.dom[0]).range([m.l, m.l + PW]);
+  if (v.dim === 2) v.sy = d3.scaleLinear().domain(v.dom[1]).range([m.t + v.PH, m.t]);
+  else if (v.task === "reg") v.sy = d3.scaleLinear().domain(v.yRange).nice().range([m.t + v.PH, m.t]);
+  v.keys = new Float64Array(n);
+  v.ready = true;
+  return v;
+}
+
+// Every case, sorted from nearest to farthest from q. Ties go to the earlier row.
+function sortedKeys(v, q) {
+  const keys = v.keys, X = v.X, sd = v.sd, n = v.n;
+  for (let i = 0; i < n; i++) {
+    let d2 = 0;
+    for (let j = 0; j < v.dim; j++) { const t = (q[j] - X[i][j]) / sd[j]; d2 += t * t; }
+    keys[i] = Math.round(d2 * 1e7) * 512 + i;            // distance and row index packed in one sortable number
+  }
+  keys.sort();
+  return keys;
+}
+function nearest(v, q) { return Array.from(sortedKeys(v, q), key => key % 512); }
+const kNow = v => Math.min(KS[S.ki], v.n);
+
+// The guess from the first k rows of `order` (any array-like of row indices, nearest first).
+function guess(v, order, k, off = 0) {
+  if (v.task === "reg") {
+    let s = 0;
+    for (let i = 0; i < k; i++) s += v.y[order[off + i]];
+    return { value: s / k };
+  }
+  const counts = v.classes.map(() => 0), first = v.classes.map(() => -1);
+  for (let i = 0; i < k; i++) { const c = v.y[order[off + i]]; if (first[c] < 0) first[c] = i; counts[c]++; }
+  const top = d3.max(counts);
+  const tied = d3.range(counts.length).filter(c => counts[c] === top);
+  const win = tied.reduce((a, b) => first[a] <= first[b] ? a : b);
+  return { counts, win, tie: tied.length > 1 };
+}
+// distance (in the units the picture is drawn in) from q to its k-th nearest case, per axis
+function reach(v, q, order, k) {
+  const far = v.X[order[k - 1]];
+  const d = Math.sqrt(d3.sum(d3.range(v.dim), j => ((q[j] - far[j]) / v.sd[j]) ** 2));
+  return d3.range(v.dim).map(j => d * v.sd[j]);
+}
+
+// ---- the picture (rebuilt when the task or the number of features changes) ---------
+// one-sided beeswarm: true x, dots stacked upward so none overlap
+function swarm(v, base) {
+  const px = v.X.map(x => v.sx(x[0])), idx = d3.range(v.n).sort((a, b) => px[a] - px[b]), cy = new Array(v.n), placed = [];
+  for (const i of idx) {
+    let up = 0, moved = true;
+    while (moved) {
+      moved = false;
+      for (let p = placed.length - 1; p >= 0; p--) {
+        const j = placed[p], dx = px[i] - px[j];
+        if (dx > 2 * R) break;
+        const need = Math.sqrt(4 * R * R - dx * dx) + 0.3;
+        if (Math.abs(up - cy[j]) < need - 1e-9) { up = cy[j] + need; moved = true; }
+      }
+    }
+    cy[i] = up; placed.push(i);
+  }
+  return { px, py: cy.map(u => base - u) };
+}
+
+function build() {
+  V = prep(VIEWS[S.task + S.dim]);
+  const v = V, top = m.t, bot = m.t + v.PH;
+  d3.select("#stage").selectAll("*").remove();
+  const svg = d3.select("#stage").append("svg").attr("viewBox", `0 0 ${W} ${v.H}`).attr("width", W).attr("height", v.H);
+  svg.append("clipPath").attr("id", "plotclip").append("rect").attr("x", m.l).attr("y", top).attr("width", PW).attr("height", v.PH);
+  svg.append("rect").attr("x", m.l).attr("y", top).attr("width", PW).attr("height", v.PH).attr("fill", "#fff").attr("stroke", "#ccc");
+  const inside = svg.append("g").attr("clip-path", "url(#plotclip)");
+  L = { svg };
+  L.map = inside.append("image").attr("x", m.l).attr("y", top).attr("width", PW).attr("height", v.PH).attr("preserveAspectRatio", "none");
+  L.strip = inside.append("g");                                           // 1 feature, classes: the guess along the axis
+  L.reach = inside.append(v.dim === 2 ? "ellipse" : "rect").attr("fill", "#000").attr("fill-opacity", 0.07).attr("stroke", "#555").attr("stroke-width", 1);
+  L.lines = inside.append("g").attr("stroke", "#111").attr("stroke-opacity", 0.35);
+
+  // where each case is drawn
+  if (v.dim === 2) { v.px = v.X.map(x => v.sx(x[0])); v.py = v.X.map(x => v.sy(x[1])); }
+  else if (v.task === "reg") { v.px = v.X.map(x => v.sx(x[0])); v.py = v.y.map(y => v.sy(y)); }
+  else { v.qy = bot - 12 - 13; Object.assign(v, swarm(v, v.qy - 13 - R - 2)); }
+  const fill = v.task === "cls" ? i => CLS_COL[v.y[i]] : v.dim === 2 ? i => v.color(v.y[i]) : () => NEUTRAL;
+  L.dots = inside.append("g").selectAll("circle").data(d3.range(v.n)).join("circle")
+    .attr("r", R).attr("cx", i => v.px[i]).attr("cy", i => v.py[i]).attr("fill", fill);
+  L.curve = inside.append("path").attr("fill", "none").attr("stroke", ACCENT).attr("stroke-width", 2);     // 1 feature, number: every guess
+  L.avg = inside.append("line").attr("stroke", ACCENT).attr("stroke-width", 3);
+  L.query = svg.append("circle").attr("r", 8).attr("stroke", "#111").attr("stroke-width", 2.5);
+
+  // axes: tick numbers only where there is data
+  const xAx = d3.axisBottom(v.sx).tickValues(d3.ticks(v.range[0][0], v.range[0][1], 7));
+  svg.append("g").attr("transform", `translate(0,${bot})`).call(xAx);
+  svg.append("text").attr("class", "axt").attr("x", m.l + PW / 2).attr("y", bot + 38).attr("text-anchor", "middle").attr("font-size", 14).text(v.axes[0]);
+  if (v.sy) {
+    const yAx = v.dim === 2 ? d3.axisLeft(v.sy).tickValues(d3.ticks(v.range[1][0], v.range[1][1], 7)) : d3.axisLeft(v.sy).ticks(7);
+    svg.append("g").attr("transform", `translate(${m.l},0)`).call(yAx);
+    svg.append("text").attr("class", "axt").attr("transform", `translate(18,${top + v.PH / 2}) rotate(-90)`).attr("text-anchor", "middle").attr("font-size", 14)
+      .text(v.dim === 2 ? v.axes[1] : v.outName);
+  }
+
+  // drag the new case
+  const move = e => {
+    const [x, y] = d3.pointer(e, svg.node());
+    v.q[0] = Math.max(v.dom[0][0], Math.min(v.dom[0][1], v.sx.invert(x)));
+    if (v.dim === 2) v.q[1] = Math.max(v.dom[1][0], Math.min(v.dom[1][1], v.sy.invert(y)));
+    draw();
+  };
+  svg.on("pointerdown", e => { dragging = true; try { svg.node().setPointerCapture(e.pointerId); } catch (_) {} move(e); })
+     .on("pointermove", e => { if (dragging) move(e); })
+     .on("pointerup pointercancel", () => { dragging = false; });
+
+  // words
+  d3.select("#q").text(`${v.ask} Drag it ${v.dim === 2 ? "anywhere" : "left and right"}.`);
+  d3.select("#alllab").text(`Show the guess for every possible new ${v.one}`);
+  const leg = [];
+  if (v.task === "cls") v.classes.forEach((c, i) => leg.push(`<span><i style="background:${CLS_COL[i]}"></i>${c}</span>`));
+  else if (v.dim === 1) leg.push(`<span><i style="background:${NEUTRAL}"></i>one ${v.one}</span>`);
+  leg.push(`<span><i style="border:2px solid #111"></i>the k nearest</span>`);
+  leg.push(`<span><i style="border:2.5px solid #111;width:15px;height:15px;vertical-align:-3px;background:${v.task === "reg" && v.dim === 1 ? ACCENT : "#ddd"}"></i>the new ${v.one}${v.task === "reg" && v.dim === 1 ? ", at our guess" : ", colored by our guess"}</span>`);
+  d3.select("#legend").html(leg.join(""));
+  d3.select("#ans").html("");
+  L.ans = null;
+  draw();
+}
+
+// ---- everything that changes with k or with the new case ----------------------------
+function draw() {
+  const v = V, k = kNow(v), top = m.t, bot = m.t + v.PH;
+  const order = nearest(v, v.q), g = guess(v, order, k), r = reach(v, v.q, order, k);
+  v.last = { order, g, k };
+  const qx = v.sx(v.q[0]), near = new Uint8Array(v.n);
+  for (let i = 0; i < k; i++) near[order[i]] = 1;
+
+  L.dots.attr("fill-opacity", i => near[i] ? 1 : 0.5)
+        .attr("stroke", i => near[i] ? "#111" : (v.task === "reg" && v.dim === 2 ? "#fff" : "none"))
+        .attr("stroke-width", i => near[i] ? 1.5 : 0.5);
+  L.dots.filter(i => near[i]).raise();
+
+  const gcol = v.task === "cls" ? CLS_COL[g.win] : v.dim === 2 ? v.color(g.value) : ACCENT;
+  if (v.dim === 2) {
+    const qy = v.sy(v.q[1]), kx = Math.abs(v.sx(v.q[0] + r[0]) - qx);
+    L.reach.attr("cx", qx).attr("cy", qy).attr("rx", kx).attr("ry", Math.abs(v.sy(v.q[1] + r[1]) - qy));
+    L.lines.selectAll("line").data(k <= 30 ? order.slice(0, k) : []).join("line")
+      .attr("x1", qx).attr("y1", qy).attr("x2", i => v.px[i]).attr("y2", i => v.py[i]);
+    L.query.attr("cx", qx).attr("cy", qy).attr("fill", gcol);
+    L.avg.attr("display", "none");
+  } else {
+    const x0 = v.sx(v.q[0] - r[0]), x1 = v.sx(v.q[0] + r[0]);
+    L.reach.attr("x", x0).attr("y", top - 2).attr("width", Math.max(x1 - x0, 1)).attr("height", v.PH + 4);
+    if (v.task === "reg") {
+      const y = v.sy(g.value);
+      L.avg.attr("display", null).attr("x1", x0).attr("x2", x1).attr("y1", y).attr("y2", y);
+      L.query.attr("cx", qx).attr("cy", y).attr("fill", gcol);
+    } else {
+      L.avg.attr("display", "none");
+      L.query.attr("cx", qx).attr("cy", v.qy).attr("fill", gcol);
+    }
+  }
+  everyAnswer();
+  answer();
+  d3.select("#kval").text(KS[S.ki] === Infinity ? `k = all ${v.n}` : `k = ${k}`);
+}
+
+// The guess for every possible new case (the switch).
+function everyAnswer() {
+  const v = V, k = kNow(v), bot = m.t + v.PH;
+  L.map.attr("display", "none"); L.strip.attr("display", "none"); L.curve.attr("display", "none");
+  if (!S.all) return;
+  if (v.dim === 1) {
+    const xs = d3.range(0, PW + 1, 1), gs = xs.map(p => guess(v, nearest(v, [v.sx.invert(m.l + p)]), k));
+    if (v.task === "reg") {
+      const line = d3.line().x((d, i) => m.l + xs[i]).y(d => v.sy(d.value)).curve(d3.curveStepAfter);
+      L.curve.attr("display", null).attr("d", line(gs));
+    } else {
+      const runs = [];                                                    // merge neighbouring pixels with the same guess
+      gs.forEach((d, i) => { const last = runs[runs.length - 1]; if (last && last.c === d.win) last.b = xs[i] + 1; else runs.push({ c: d.win, a: xs[i], b: xs[i] + 1 }); });
+      L.strip.attr("display", null).selectAll("rect").data(runs).join("rect")
+        .attr("x", d => m.l + d.a).attr("width", d => d.b - d.a).attr("y", bot - 12).attr("height", 12).attr("fill", d => CLS_COL[d.c]);
+    }
+    return;
+  }
+  // 2 features: a GRID x GRID map. The nearest KEEP cases of every cell are found once and reused for every k.
+  const G = GRID, n = v.n, keep = Math.min(KEEP, n);
+  if (!v.grid) {
+    v.grid = new Uint16Array(G * G * keep);
+    for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) {
+      const keys = sortedKeys(v, [v.sx.invert(m.l + (i + 0.5) / G * PW), v.sy.invert(m.t + (j + 0.5) / G * v.PH)]);
+      const off = (j * G + i) * keep;
+      for (let t = 0; t < keep; t++) v.grid[off + t] = keys[t] % 512;
+    }
+  }
+  const canvas = document.createElement("canvas"); canvas.width = G; canvas.height = G;
+  let ctx = null; try { ctx = canvas.getContext("2d"); } catch (_) {}
+  if (!ctx) return;
+  const img = ctx.createImageData(G, G);
+  const whole = k > keep ? guess(v, d3.range(n), n) : null;                // k = all: one guess everywhere
+  const rgbOf = g => d3.rgb(v.task === "cls" ? CLS_COL[g.win] : v.color(g.value));
+  const wrgb = whole && rgbOf(whole);
+  for (let c = 0; c < G * G; c++) {
+    const rgb = wrgb || rgbOf(guess(v, v.grid, k, c * keep));
+    img.data[4 * c] = rgb.r; img.data[4 * c + 1] = rgb.g; img.data[4 * c + 2] = rgb.b; img.data[4 * c + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  L.map.attr("display", null).attr("href", canvas.toDataURL()).attr("opacity", v.task === "cls" ? 0.3 : 0.6)
+       .style("image-rendering", v.task === "cls" ? "pixelated" : "auto");
+}
+
+// The answer, spelled out under the picture.
+function answer() {
+  const v = V, { order, g, k } = v.last, box = d3.select("#ans");
+  const who = k === v.n ? `All ${v.n} ${v.many}` : k === 1 ? `The nearest ${v.one}` : `The ${k} nearest ${v.many}`;
+  if (v.task === "cls") {
+    if (!L.ans) {
+      box.html(`<div class="kn-ans-t"></div><div class="kn-votes"></div><div class="kn-tally"></div><div class="kn-guess"></div>`);
+      L.ans = true;
+    }
+    const by = d3.range(v.classes.length).filter(c => g.counts[c] > 0).sort((a, b) => (b === g.win) - (a === g.win) || g.counts[b] - g.counts[a]);
+    box.select(".kn-ans-t").text(`${who} ${k === 1 ? "votes" : "vote"}:`);
+    const cells = by.flatMap(c => d3.range(g.counts[c]).map(() => c));
+    box.select(".kn-votes").style("gap", k <= 50 ? "2px" : "0").selectAll("span").data(cells).join("span").style("background", c => CLS_COL[c]);
+    box.select(".kn-tally").html(by.map(c => `<span><i style="background:${CLS_COL[c]}"></i>${g.counts[c]} ${v.classes[c]}</span>`).join(""));
+    box.select(".kn-guess").html(`Our guess: <b style="color:${CLS_COL[g.win]}">${v.classes[g.win]}</b>` +
+      (g.tie ? `<span class="tie">a tie, so the closest one decides</span>` : ""));
+    return;
+  }
+  const num = d3.format(".1f")(g.value);
+  if (!L.ans) {
+    box.html(`<div class="kn-ans-t"></div><div class="kn-guess"></div><div id="strip"></div>`);
+    L.ans = true;
+    if (v.dim === 2) buildStrip();
+  }
+  box.select(".kn-ans-t").text(k === 1 ? `${who} gets:` : `${who} average:`);
+  box.select(".kn-guess").html(`Our guess: <b>${num} ${v.unit}</b>`);
+  if (v.dim === 2) {
+    const s = L.stripScale;
+    L.stripTicks.selectAll("line").data(order.slice(0, k)).join("line")
+      .attr("x1", i => s(v.y[i])).attr("x2", i => s(v.y[i])).attr("y1", 4).attr("y2", 22);
+    L.stripMark.attr("transform", `translate(${s(g.value)},24)`);
+  }
+}
+// 2 features, number: the color key, with one line per nearest case and a triangle at their average
+function buildStrip() {
+  const v = V, H = 62, a = m.l, b = m.l + PW;
+  d3.select("#strip").html(`<div class="kn-striplab">Color = ${v.unit}. Each line is one of the nearest ${v.many}, the triangle is their average.</div>`);
+  const svg = d3.select("#strip").append("svg").attr("viewBox", `0 0 ${W} ${H}`).attr("width", W).attr("height", H);
+  const s = L.stripScale = d3.scaleLinear().domain(v.yRange).range([a, b]);
+  const grad = svg.append("defs").append("linearGradient").attr("id", "kngrad");
+  d3.range(0, 1.001, 0.1).forEach(t => grad.append("stop").attr("offset", t).attr("stop-color", d3.interpolateViridis(t)));
+  svg.append("rect").attr("x", a).attr("y", 6).attr("width", b - a).attr("height", 14).attr("fill", "url(#kngrad)");
+  L.stripTicks = svg.append("g").attr("stroke", "#111").attr("stroke-width", 1.2).attr("stroke-opacity", 0.7);
+  L.stripMark = svg.append("path").attr("d", "M0,0L7,11L-7,11Z").attr("fill", "#111");
+  svg.append("g").attr("transform", `translate(0,36)`).call(d3.axisBottom(s).ticks(8).tickSize(4)).select(".domain").remove();
+}
+
+// ---- controls -------------------------------------------------------------------------
+function buttons(sel, items, key) {
+  const b = d3.select(sel).selectAll("button").data(items).join("button").text(d => d.label)
+    .on("click", (e, d) => { S[key] = d.value; b.classed("on", x => x.value === S[key]); build(); });
+  b.classed("on", d => d.value === S[key]);
+}
+
+function main() {
+  if (main.done) return; main.done = true;
+  buttons("#task", [{ label: "Classification", value: "cls" }, { label: "Regression", value: "reg" }], "task");
+  buttons("#dims", [{ label: "1 feature", value: 1 }, { label: "2 features", value: 2 }], "dim");
+  d3.select("#k").attr("max", KS.length - 1).property("value", S.ki).on("input", function () { S.ki = Math.max(0, Math.min(KS.length - 1, Math.round(+this.value))); draw(); });
+  d3.select("#all").property("checked", S.all).on("change", function () { S.all = this.checked; draw(); });
+  build();
+  window.__api = { S, VIEWS, KS, view: () => V, nearest, guess, kNow, setQ: q => { V.q = q.slice(); draw(); } };
+}
+window.addEventListener("load", main);
+</script>
+</body>
+</html>
