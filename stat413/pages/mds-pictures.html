@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MDS in Pictures</title>
+  <link rel="stylesheet" href="../styling/global.css">
+  <!--
+    SOURCES (kept in source; not displayed in the applet UI)
+    - Cars      : R datasets mtcars (1974 Motor Trend road tests), datasets/mtcars.csv; wt is shown in lb (x 1000)
+    - Penguins  : palmerpenguins (Gorman, Williams & Fraser 2014), datasets/penguins.csv;
+                  a seeded sample of 20 birds per species so one dot's lines stay readable
+    - Cereals   : MASS UScereal (per-cup nutrition labels), datasets/uscereal.csv
+    - Swiss     : R datasets swiss (47 French-speaking provinces, about 1888), datasets/swiss.csv;
+                  color = more / less than half Catholic
+    - US cities : psych::cities, airline distances in miles between 11 US airports
+                  (ATL BOS ORD DCA DEN LAX MIA JFK SEA SFO MSY)
+    - Colors    : Ekman, G. (1954). Dimensions of color vision. Journal of Psychology 38, 467-474.
+                  31 people rated how alike each pair of 14 colors looks (0 to 4); the table holds
+                  1 - (mean rating / 4), as in Borg & Groenen, Modern Multidimensional Scaling, Table 4.1.
+                  The dot colors are an approximate screen rendering of each wavelength, for display only.
+
+    WHAT IS COMPUTED
+    - Tab 1 distances: each variable is z-scored, then the straight-line distance in 3D. The 3D
+      picture is drawn in those same z-scored coordinates, so what is measured is what is seen.
+    - Tab 2 distances: the table, as given. No coordinates exist anywhere in that tab.
+    - The map: metric MDS. Minimise  sum over pairs of (distance on the map - distance in the data)^2,
+      absolute scale, no weights, by gradient descent with the fixed step 1/(2n), n = number of items.
+      For this loss that step is exactly the SMACOF update (the Guttman transform), so the loss never
+      rises. "Run gradient descent" plays back those iterations at a steady speed along the path, so
+      the motion is the algorithm's own.
+    - "All pairs together: off by" is Kruskal's stress-1:  sqrt( sum (d_map - d_data)^2 / sum d_data^2 ).
+      The percentage beside the two picked items is that one pair's own error, |d_map - d_data| / d_data.
+    - Line color: (d_map - d_data) / (root-mean-square data distance); full color at +-KFULL.
+    - LOCAL OPTIMA ARE HIDDEN ON PURPOSE. From an unlucky random start gradient descent stops at a worse
+      map (measured over 300 random starts each: the best map is reached from 9% of them for cars, 54% for
+      cereals, 57% for US cities, 83% for penguins and for colors, 99% for Swiss provinces; the cars'
+      cloud is nearly a line, which is the hard case). "Re-initialize randomly" therefore keeps drawing
+      random starts until it has one from which gradient descent does reach the best map known. To show
+      a stuck map in class, set ALLOW_STUCK = true below.
+    - The best map known = the best end point from the classical (eigenvector) start and 12 random starts.
+  -->
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; color: #222; }
+    h1 { font-size: 24px; margin-bottom: 6px; }
+    .md-wrap { max-width: 950px; }
+    .md-lead { font-size: 15px; margin: 0 0 12px 0; min-height: 1.2em; }
+    .md-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0; }
+    .md-row button { font-size: 15px; padding: 7px 14px; border-radius: 6px; border: 1px solid #999;
+                     background: #f5f5f5; cursor: pointer; }
+    .md-row button:hover { background: #ebebeb; }
+    .md-row button.on { background: #0072BD; border-color: #0072BD; color: #fff; }
+    .md-row button:disabled { opacity: 0.45; cursor: default; background: #f5f5f5; }
+    #tabs button, #acts button { font-weight: bold; }
+    #acts { gap: 6px; }
+    #acts button { font-size: 14px; padding: 7px 10px; white-space: nowrap; }     /* three long labels on one row */
+    .md-legend { font-size: 14.5px; margin: 10px 0 8px 0; display: flex; flex-wrap: wrap; align-items: center;
+                 gap: 4px 18px; min-height: 1.3em; }
+    .md-legend i.dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+    .md-legend i.ln { display: inline-block; width: 22px; height: 0; border-top: 3px solid; margin: 0 6px 4px 0; vertical-align: middle; }
+    .md-legend .sep { color: #555; margin-left: 10px; }
+    .md-legend .hint { color: #666; margin-left: auto; }
+    .md-stage { display: flex; flex-wrap: wrap; gap: 14px 22px; }
+    .md-col { width: 460px; max-width: 100%; }
+    .md-cap { font-size: 16px; font-weight: bold; margin: 0 0 5px 0; min-height: 1.2em; }
+    svg { display: block; max-width: 100%; height: auto; touch-action: none; }
+    #left svg.turn, #right svg { cursor: grab; }
+    #left svg.turn:active, #right svg:active { cursor: grabbing; }
+    .hit { cursor: pointer; }
+    .axt { fill: #333; }
+    .md-under { margin-top: 8px; font-size: 14px; }
+    .md-under .md-top { display: flex; align-items: center; min-height: 40px; margin: 0 0 2px 0; }
+    .md-two { border-collapse: collapse; table-layout: fixed; width: 100%; margin-bottom: 8px; }
+    .md-two th { font-weight: normal; font-size: 12.5px; color: #555; text-align: right; vertical-align: bottom;
+                 height: 2.5em; padding: 0 0 2px 6px; }
+    .md-two td { text-align: right; padding: 2px 0 2px 6px; height: 1.35em; font-variant-numeric: tabular-nums; }
+    .md-two td.who { text-align: left; width: 40%; padding-left: 0; white-space: nowrap;
+                                     overflow: hidden; text-overflow: ellipsis; }
+    .md-two.bare td.who { width: 100%; }
+    i.ring { display: inline-block; box-sizing: border-box; width: 13px; height: 13px; border-radius: 50%;
+             margin-right: 7px; vertical-align: -2px; border: 2px solid #111; }
+    i.ring.b { border-style: dashed; }
+    .md-bar { display: flex; align-items: center; gap: 8px; margin: 5px 0; min-height: 1.35em; }
+    .md-bar .lab { flex: 0 0 82px; color: #333; }
+    .md-bar .track { flex: 0 0 190px; height: 12px; background: #ececec; border-radius: 3px; overflow: hidden; }
+    .md-bar .track i { display: block; height: 100%; width: 0; border-radius: 0 3px 3px 0; }
+    .md-bar .val { flex: 1 1 0; white-space: nowrap; color: #333; }
+    .md-bar.all .lab { flex-basis: 140px; }
+    .md-bar.all .val { font-weight: bold; }
+    .md-sub { color: #555; margin: 2px 0 4px 0; min-height: 1.2em; }
+  </style>
+  <script src="https://d3js.org/d3.v7.js"></script>
+</head>
+<body>
+<div class="md-wrap">
+  <h1>MDS in Pictures</h1>
+
+  <div class="md-row" id="tabs"></div>
+  <p class="md-lead" id="lead"></p>
+  <div class="md-row" id="picker"></div>
+  <div class="md-legend" id="legend"></div>
+
+  <div class="md-stage">
+    <div class="md-col">
+      <div class="md-cap" id="capL"></div>
+      <div id="left"></div>
+      <div class="md-under">
+        <div class="md-top md-sub" id="how"></div>
+        <table class="md-two" id="two"></table>
+        <div class="md-sub">How far apart these two are:</div>
+        <div class="md-bar"><span class="lab">in the data</span><span class="track"><i id="barD"></i></span><span class="val" id="valD"></span></div>
+        <div class="md-bar"><span class="lab">on the map</span><span class="track"><i id="barM"></i></span><span class="val" id="valM"></span></div>
+      </div>
+    </div>
+    <div class="md-col">
+      <div class="md-cap" id="capR"></div>
+      <div id="right"></div>
+      <div class="md-under">
+        <div class="md-top md-row" id="acts"></div>
+        <table class="md-two" id="twoM"></table>
+        <div class="md-sub">How far off the whole map is:</div>
+        <div class="md-bar all"><span class="lab">all pairs together</span><span class="track"><i id="barS"></i></span><span class="val" id="valS"></span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---- DATA (swap here) --------------------------------------------------------
+// Tab 1. One entry per button: real measurements, three per item.
+//   axes = the three variable names, fmt = how to print each (d3-format),
+//   groups / grp = a real grouping used only to color the dots (at most 3 groups),
+//   names = one per item, pts = [x, y, z] in the variables' own units.
+const DATA3 = [
+  { key: "cars", label: "Cars", axes: ["Weight (lb)","Miles per gallon","Horsepower"], fmt: [",.0f",".1f",".0f"],
+    groups: ["4 cylinders","6 cylinders","8 cylinders"],
+    names: ["Mazda RX4","Mazda RX4 Wag","Datsun 710","Hornet 4 Drive","Hornet Sportabout","Valiant","Duster 360","Merc 240D","Merc 230","Merc 280","Merc 280C","Merc 450SE","Merc 450SL","Merc 450SLC","Cadillac Fleetwood","Lincoln Continental","Chrysler Imperial","Fiat 128","Honda Civic","Toyota Corolla","Toyota Corona","Dodge Challenger","AMC Javelin","Camaro Z28","Pontiac Firebird","Fiat X1-9","Porsche 914-2","Lotus Europa","Ford Pantera L","Ferrari Dino","Maserati Bora","Volvo 142E"],
+    grp: [1,1,0,1,2,1,2,0,0,1,1,2,2,2,2,2,2,0,0,0,0,2,2,2,2,0,0,0,2,1,2,0],
+    pts: [[2620,21.0,110],[2875,21.0,110],[2320,22.8,93],[3215,21.4,110],[3440,18.7,175],[3460,18.1,105],[3570,14.3,245],[3190,24.4,62],[3150,22.8,95],[3440,19.2,123],[3440,17.8,123],[4070,16.4,180],[3730,17.3,180],[3780,15.2,180],[5250,10.4,205],[5424,10.4,215],[5345,14.7,230],[2200,32.4,66],[1615,30.4,52],[1835,33.9,65],[2465,21.5,97],[3520,15.5,150],[3435,15.2,150],[3840,13.3,245],[3845,19.2,175],[1935,27.3,66],[2140,26.0,91],[1513,30.4,113],[3170,15.8,264],[2770,19.7,175],[3570,15.0,335],[2780,21.4,109]] },
+  { key: "penguins", label: "Penguins", axes: ["Bill length (mm)","Bill depth (mm)","Flipper length (mm)"], fmt: [".1f",".1f",".0f"],
+    groups: ["Adelie","Chinstrap","Gentoo"],
+    names: ["Adelie penguin","Adelie penguin","Adelie penguin","Adelie penguin","Adelie penguin","Adelie penguin","Adelie penguin","Adelie penguin","Adelie penguin","Adelie penguin","Adelie penguin","Adelie penguin","Adelie penguin","Adelie penguin","Adelie penguin","Adelie penguin","Adelie penguin","Adelie penguin","Adelie penguin","Adelie penguin","Chinstrap penguin","Chinstrap penguin","Chinstrap penguin","Chinstrap penguin","Chinstrap penguin","Chinstrap penguin","Chinstrap penguin","Chinstrap penguin","Chinstrap penguin","Chinstrap penguin","Chinstrap penguin","Chinstrap penguin","Chinstrap penguin","Chinstrap penguin","Chinstrap penguin","Chinstrap penguin","Chinstrap penguin","Chinstrap penguin","Chinstrap penguin","Chinstrap penguin","Gentoo penguin","Gentoo penguin","Gentoo penguin","Gentoo penguin","Gentoo penguin","Gentoo penguin","Gentoo penguin","Gentoo penguin","Gentoo penguin","Gentoo penguin","Gentoo penguin","Gentoo penguin","Gentoo penguin","Gentoo penguin","Gentoo penguin","Gentoo penguin","Gentoo penguin","Gentoo penguin","Gentoo penguin","Gentoo penguin"],
+    grp: [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+    pts: [[38.9,17.8,181.0],[42.0,20.2,190.0],[36.6,17.8,185.0],[38.2,18.1,185.0],[40.5,18.9,180.0],[37.2,18.1,178.0],[42.2,18.5,180.0],[36.0,18.5,186.0],[41.1,19.0,182.0],[34.6,17.2,189.0],[35.1,19.4,193.0],[37.3,17.8,191.0],[34.0,17.1,185.0],[39.6,18.1,186.0],[35.0,17.9,192.0],[38.6,17.2,199.0],[35.7,17.0,189.0],[39.0,17.1,191.0],[38.5,17.9,190.0],[32.1,15.5,188.0],[46.5,17.9,192.0],[46.1,18.2,178.0],[46.0,18.9,195.0],[46.6,17.8,193.0],[47.0,17.3,185.0],[50.3,20.0,197.0],[49.2,18.2,195.0],[50.6,19.4,193.0],[52.0,19.0,197.0],[50.5,18.4,200.0],[50.9,17.9,196.0],[50.8,18.5,201.0],[50.1,17.9,190.0],[49.8,17.3,198.0],[48.1,16.4,199.0],[42.5,17.3,187.0],[49.3,19.9,203.0],[46.8,16.5,189.0],[55.8,19.8,207.0],[49.6,18.2,193.0],[43.3,13.4,209.0],[40.9,13.7,214.0],[45.5,13.7,214.0],[46.2,14.5,209.0],[50.2,14.3,218.0],[59.6,17.0,230.0],[50.5,15.9,225.0],[46.6,14.2,210.0],[50.1,15.0,225.0],[43.8,13.9,208.0],[45.5,15.0,220.0],[49.8,16.8,230.0],[46.2,14.4,214.0],[47.4,14.6,212.0],[50.0,15.9,224.0],[43.4,14.4,218.0],[47.5,14.0,212.0],[43.5,15.2,213.0],[48.8,16.2,222.0],[49.9,16.1,213.0]] },
+  { key: "cereals", label: "Cereals", axes: ["Calories per cup","Protein (g per cup)","Sugars (g per cup)"], fmt: [".0f",".1f",".1f"],
+    groups: ["General Mills","Kellogg's","Other makers"],
+    names: ["100% Bran","All-Bran","All-Bran with Extra Fiber","Apple Cinnamon Cheerios","Apple Jacks","Basic 4","Bran Chex","Bran Flakes","Cap'n'Crunch","Cheerios","Cinnamon Toast Crunch","Clusters","Cocoa Puffs","Corn Chex","Corn Flakes","Corn Pops","Count Chocula","Cracklin' Oat Bran","Crispix","Crispy Wheat & Raisins","Double Chex","Froot Loops","Frosted Flakes","Frosted Mini-Wheats","Fruit & Fibre: Dates Walnuts and Oats","Fruitful Bran","Fruity Pebbles","Golden Crisp","Golden Grahams","Grape Nuts Flakes","Grape-Nuts","Great Grains Pecan","Honey Graham Ohs","Honey Nut Cheerios","Honey-comb","Just Right Fruit & Nut","Kix","Life","Lucky Charms","Mueslix Crispy Blend","Multi-Grain Cheerios","Nut&Honey Crunch","Nutri-Grain Almond-Raisin","Oatmeal Raisin Crisp","Post Nat. Raisin Bran","Product 19","Puffed Rice","Quaker Oat Squares","Raisin Bran","Raisin Nut Bran","Raisin Squares","Rice Chex","Rice Krispies","Shredded Wheat 'n'Bran","Shredded Wheat spoon size","Smacks","Special K","Total Corn Flakes","Total Raisin Bran","Total Whole Grain","Triples","Trix","Wheat Chex","Wheaties","Wheaties Honey Gold"],
+    grp: [2,1,1,0,1,0,2,2,2,0,0,0,0,2,1,1,0,1,1,0,2,1,1,1,2,1,2,2,0,2,2,2,2,0,2,1,0,2,0,1,0,1,1,0,2,1,2,2,1,0,1,2,1,2,2,1,1,0,0,0,0,0,2,0,0],
+    pts: [[212.1,12.12,18.18],[212.1,12.12,15.15],[100.0,8.0,0.0],[146.7,2.67,13.33],[110.0,2.0,14.0],[173.3,4.0,10.67],[134.3,2.99,8.96],[134.3,4.48,7.46],[160.0,1.33,16.0],[88.0,4.8,0.8],[160.0,1.33,12.0],[220.0,6.0,14.0],[110.0,1.0,13.0],[110.0,2.0,3.0],[100.0,2.0,2.0],[110.0,1.0,12.0],[110.0,1.0,13.0],[220.0,6.0,14.0],[110.0,2.0,3.0],[133.3,2.67,13.33],[133.3,2.67,6.67],[110.0,2.0,13.0],[146.7,1.33,14.67],[125.0,3.75,8.75],[179.1,4.48,14.93],[179.1,4.48,17.91],[146.7,1.33,16.0],[113.6,2.27,17.05],[146.7,1.33,12.0],[113.6,3.41,5.68],[440.0,12.0,12.0],[363.6,9.09,12.12],[120.0,1.0,11.0],[146.7,4.0,13.33],[82.7,0.75,8.27],[186.7,4.0,12.0],[73.3,1.33,2.0],[149.3,5.97,8.96],[110.0,2.0,12.0],[238.8,4.48,19.4],[100.0,2.0,6.0],[179.1,2.99,13.43],[209.0,4.48,10.45],[260.0,6.0,20.0],[179.1,4.48,20.9],[100.0,3.0,3.0],[50.0,1.0,0.0],[200.0,8.0,12.0],[160.0,4.0,16.0],[200.0,6.0,16.0],[180.0,4.0,12.0],[97.3,0.88,1.77],[110.0,2.0,3.0],[134.3,4.48,0.0],[134.3,4.48,0.0],[146.7,2.67,20.0],[110.0,6.0,3.0],[110.0,2.0,3.0],[140.0,3.0,14.0],[100.0,3.0,3.0],[146.7,2.67,4.0],[110.0,1.0,12.0],[149.3,4.48,4.48],[100.0,3.0,3.0],[146.7,2.67,10.67]] },
+  { key: "swiss", label: "Swiss provinces", axes: ["Fertility index","Men in farming (%)","Schooled past primary (%)"], fmt: [".1f",".1f",".0f"],
+    groups: ["Mostly Catholic","Mostly Protestant"],
+    names: ["Courtelary","Delemont","Franches-Mnt","Moutier","Neuveville","Porrentruy","Broye","Glane","Gruyere","Sarine","Veveyse","Aigle","Aubonne","Avenches","Cossonay","Echallens","Grandson","Lausanne","La Vallee","Lavaux","Morges","Moudon","Nyone","Orbe","Oron","Payerne","Paysd'enhaut","Rolle","Vevey","Yverdon","Conthey","Entremont","Herens","Martigwy","Monthey","St Maurice","Sierre","Sion","Boudry","La Chauxdfnd","Le Locle","Neuchatel","Val de Ruz","ValdeTravers","V. De Geneve","Rive Droite","Rive Gauche"],
+    grp: [1,0,0,1,1,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,0,0],
+    pts: [[80.2,17.0,12.0],[83.1,45.1,9.0],[92.5,39.7,5.0],[85.8,36.5,7.0],[76.9,43.5,15.0],[76.1,35.3,7.0],[83.8,70.2,7.0],[92.4,67.8,8.0],[82.4,53.3,7.0],[82.9,45.2,13.0],[87.1,64.5,6.0],[64.1,62.0,12.0],[66.9,67.5,7.0],[68.9,60.7,12.0],[61.7,69.3,5.0],[68.3,72.6,2.0],[71.7,34.0,8.0],[55.7,19.4,28.0],[54.3,15.2,20.0],[65.1,73.0,9.0],[65.5,59.8,10.0],[65.0,55.1,3.0],[56.6,50.9,12.0],[57.4,54.1,6.0],[72.5,71.2,1.0],[74.2,58.1,8.0],[72.0,63.5,3.0],[60.5,60.8,10.0],[58.3,26.8,19.0],[65.4,49.5,8.0],[75.5,85.9,2.0],[69.3,84.9,6.0],[77.3,89.7,2.0],[70.5,78.2,6.0],[79.4,64.9,3.0],[65.0,75.9,9.0],[92.2,84.6,3.0],[79.3,63.1,13.0],[70.4,38.4,12.0],[65.7,7.7,11.0],[72.7,16.7,13.0],[64.4,17.6,32.0],[77.6,37.6,7.0],[67.6,18.7,7.0],[35.0,1.2,53.0],[44.7,46.6,29.0],[42.8,27.7,29.0]] }
+];
+// Tab 2. One entry per button: nothing but a table of distances between pairs.
+//   names = one per item, labels = short forms for the table and the map (default: names),
+//   D = symmetric table with zeros on the diagonal, given = caption over the table,
+//   say = a distance in words, cell = a distance as printed in a table cell,
+//   nm (optional) = wavelengths, used only to color the dots.
+const DATAD = [
+  { key: "cities", label: "US cities", given: "The data: flight miles between each pair",
+    say: d => d3.format(",.0f")(d) + " miles", cell: d => d3.format(".0f")(d),
+    names: ["Atlanta","Boston","Chicago","Washington","Denver","Los Angeles","Miami","New York","Seattle","San Francisco","New Orleans"],
+    D: [[0,934,585,542,1209,1942,605,751,2181,2139,424],[934,0,853,392,1769,2601,1252,183,2492,2700,1356],[585,853,0,598,918,1748,1187,720,1736,1857,830],[542,392,598,0,1493,2305,922,209,2328,2442,964],[1209,1769,918,1493,0,836,1723,1636,1023,951,1079],[1942,2601,1748,2305,836,0,2345,2461,957,341,1679],[605,1252,1187,922,1723,2345,0,1092,2733,2594,669],[751,183,720,209,1636,2461,1092,0,2412,2577,1173],[2181,2492,1736,2328,1023,957,2733,2412,0,681,2101],[2139,2700,1857,2442,951,341,2594,2577,681,0,1925],[424,1356,830,964,1079,1679,669,1173,2101,1925,0]] },
+  { key: "colors", label: "Colors", given: "The data: how different each pair looks, 0 to 1",
+    say: d => d3.format(".2f")(d), cell: d => d3.format(".2f")(d).replace(/^0/, ""),
+    nm: [434,445,465,472,490,504,537,555,584,600,610,628,651,674],
+    names: ["434 nm","445 nm","465 nm","472 nm","490 nm","504 nm","537 nm","555 nm","584 nm","600 nm","610 nm","628 nm","651 nm","674 nm"], labels: ["434","445","465","472","490","504","537","555","584","600","610","628","651","674"],
+    D: [[0.0,0.14,0.58,0.58,0.82,0.94,0.93,0.96,0.98,0.93,0.91,0.88,0.87,0.84],[0.14,0.0,0.5,0.56,0.78,0.91,0.93,0.93,0.98,0.96,0.93,0.89,0.87,0.86],[0.58,0.5,0.0,0.19,0.53,0.83,0.9,0.92,0.98,0.99,0.98,0.99,0.95,0.97],[0.58,0.56,0.19,0.0,0.46,0.75,0.9,0.91,0.98,0.99,1.0,0.99,0.98,0.96],[0.82,0.78,0.53,0.46,0.0,0.39,0.69,0.74,0.93,0.98,0.98,0.99,0.98,1.0],[0.94,0.91,0.83,0.75,0.39,0.0,0.38,0.55,0.86,0.92,0.98,0.98,0.98,0.99],[0.93,0.93,0.9,0.9,0.69,0.38,0.0,0.27,0.78,0.86,0.95,0.98,0.98,1.0],[0.96,0.93,0.92,0.91,0.74,0.55,0.27,0.0,0.67,0.81,0.96,0.97,0.98,0.98],[0.98,0.98,0.98,0.98,0.93,0.86,0.78,0.67,0.0,0.42,0.63,0.73,0.8,0.77],[0.93,0.96,0.99,0.99,0.98,0.92,0.86,0.81,0.42,0.0,0.26,0.5,0.59,0.72],[0.91,0.93,0.98,1.0,0.98,0.98,0.95,0.96,0.63,0.26,0.0,0.24,0.38,0.45],[0.88,0.89,0.99,0.99,0.99,0.98,0.98,0.97,0.73,0.5,0.24,0.0,0.15,0.32],[0.87,0.87,0.95,0.98,0.98,0.98,0.98,0.98,0.8,0.59,0.38,0.15,0.0,0.24],[0.84,0.86,0.97,0.96,1.0,0.99,1.0,0.98,0.77,0.72,0.45,0.32,0.24,0.0]] }
+];
+const TABS = [
+  { label: "From 3D to 2D", data: DATA3, capL: "The data: 3 dimensions",
+    lead: "MDS draws a flat map that keeps the dots as far apart as they are in the data.",
+    hint: "drag a picture to turn it", how: "Click a dot to pick it; point at another to compare." },
+  { label: "From distances only", data: DATAD,
+    lead: "No locations, only how far apart each pair is.",
+    hint: "drag the map to turn it", how: "Click a row or a dot to pick it; point at another to compare." }
+];
+const ALLOW_STUCK = false;   // true: "Re-initialize randomly" keeps the first random start it draws, even one that ends at a worse map
+// ------------------------------------------------------------------------------
+
+const GCOL = ["#C98A00", "#B0409F", "#12A07C"];                 // dots: one color per group
+const C_ONE = "#5f6b7a";                                        // dots when color carries no meaning
+const C_NEAR = "#2a78d6", C_FAR = "#d6402f", C_OK = "#b4b4b0";  // a pair on the map: too close / too far apart / right
+const C_DATA = "#8a8a86";                                       // a distance in the data
+const P = 460;                                                  // every picture is P x P
+const KFULL = 0.35;      // a distance wrong by this share of a typical distance gets the full color
+const SPREAD = 0.8;      // radius of a random start, as a share of a typical distance
+const S = { tab: 0, i: [0, 0], a: 0, b: 1, yaw: -0.55, pitch: 0.38, rot: 0, flip: 1, flipTo: 1, phase: "scrambled" };
+let DS = null;           // the dataset on screen
+let Z = null;            // the map right now: [x0, y0, x1, y1, ...] in data-distance units, centered on 0
+let TR = null;           // the gradient descent run that the button will play: { states, arc, stress }
+let anim = null, flipAnim = null, dragging = false;
+const L = {};            // d3 selections
+
+// ---- engine --------------------------------------------------------------------
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+// Eigen-decomposition of a symmetric matrix by Jacobi rotations: [{val, vec}], largest first.
+function eigSym(Min) {
+  const n = Min.length, M = Min.map(r => r.slice());
+  const V = d3.range(n).map(i => d3.range(n).map(j => +(i === j)));
+  let all = 0;
+  for (let p = 0; p < n; p++) for (let q = 0; q < n; q++) all += M[p][q] * M[p][q];
+  for (let sweep = 0; sweep < 60; sweep++) {
+    let off = 0;
+    for (let p = 0; p < n; p++) for (let q = p + 1; q < n; q++) off += M[p][q] * M[p][q];
+    if (off <= 1e-22 * all) break;
+    for (let p = 0; p < n; p++) for (let q = p + 1; q < n; q++) {
+      if (Math.abs(M[p][q]) < 1e-300) continue;
+      const th = 0.5 * Math.atan2(2 * M[p][q], M[q][q] - M[p][p]), c = Math.cos(th), s = Math.sin(th);
+      for (let k = 0; k < n; k++) { const a = M[k][p], b = M[k][q]; M[k][p] = c * a - s * b; M[k][q] = s * a + c * b; }
+      for (let k = 0; k < n; k++) { const a = M[p][k], b = M[q][k]; M[p][k] = c * a - s * b; M[q][k] = s * a + c * b; }
+      for (let k = 0; k < n; k++) { const a = V[k][p], b = V[k][q]; V[k][p] = c * a - s * b; V[k][q] = s * a + c * b; }
+    }
+  }
+  return d3.range(n).map(j => ({ val: M[j][j], vec: V.map(r => r[j]) })).sort((a, b) => b.val - a.val);
+}
+
+// distance on a map Zm between items i and j
+const dmap = (Zm, i, j) => { const dx = Zm[2 * i] - Zm[2 * j], dy = Zm[2 * i + 1] - Zm[2 * j + 1]; return Math.sqrt(dx * dx + dy * dy); };
+
+// "distances off by": stress-1 of a map
+function stress(ds, Zm) {
+  const n = ds.n; let num = 0;
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) { const e = dmap(Zm, i, j) - ds.del[i * n + j]; num += e * e; }
+  return Math.sqrt(num / ds.den);
+}
+
+// One gradient descent step, map - gradient / (2n), computed as the Guttman transform: writes the improved map into `out`.
+// Returns sum over pairs of (map distance - data distance)^2 for the map it was given.
+function guttman(ds, Zm, out) {
+  const n = ds.n, del = ds.del; let raw = 0;
+  out.fill(0);
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+    const dx = Zm[2 * i] - Zm[2 * j], dy = Zm[2 * i + 1] - Zm[2 * j + 1], d = Math.sqrt(dx * dx + dy * dy), t = del[i * n + j];
+    raw += (d - t) * (d - t);
+    if (d < 1e-12) continue;
+    const r = t / d;
+    out[2 * i] += r * dx; out[2 * i + 1] += r * dy; out[2 * j] -= r * dx; out[2 * j + 1] -= r * dy;
+  }
+  for (let k = 0; k < 2 * n; k++) out[k] /= n;
+  return raw;
+}
+
+// Run gradient descent from a starting map until the steps stop improving it.
+// keep = true also returns every map along the way and the distance travelled so far (arc).
+function run(ds, Z0, keep) {
+  let cur = Float64Array.from(Z0), nxt = new Float64Array(cur.length), prev = Infinity;
+  const states = keep ? [cur.slice()] : null, arc = [0];
+  for (let it = 0; it < 5000; it++) {
+    const raw = guttman(ds, cur, nxt);
+    if (it > 0 && prev - raw <= 1e-12 * prev) break;
+    prev = raw;
+    if (keep) {
+      let mv = 0;
+      for (let k = 0; k < cur.length; k++) mv += (nxt[k] - cur[k]) * (nxt[k] - cur[k]);
+      arc.push(arc[arc.length - 1] + Math.sqrt(mv));
+      states.push(nxt.slice());
+    }
+    const sw = cur; cur = nxt; nxt = sw;
+  }
+  return { end: cur.slice(), stress: stress(ds, cur), states, arc };
+}
+
+// a random start: every item dropped at random in a disc a little tighter than the data's distances
+function scatter(ds, rng) {
+  const n = ds.n, Z0 = new Float64Array(2 * n); let mx = 0, my = 0;
+  for (let i = 0; i < n; i++) {
+    const r = SPREAD * ds.rms * Math.sqrt(rng()), a = 2 * Math.PI * rng();
+    Z0[2 * i] = r * Math.cos(a); Z0[2 * i + 1] = r * Math.sin(a);
+    mx += Z0[2 * i] / n; my += Z0[2 * i + 1] / n;
+  }
+  for (let i = 0; i < n; i++) { Z0[2 * i] -= mx; Z0[2 * i + 1] -= my; }
+  return Z0;
+}
+
+// the classical (eigenvector) map, used only as one of the starts when looking for the best map
+function classical(ds) {
+  const n = ds.n, sq = (i, j) => ds.del[i * n + j] * ds.del[i * n + j];
+  const rowm = d3.range(n).map(i => d3.mean(d3.range(n), j => sq(i, j))), tot = d3.mean(rowm);
+  const E = eigSym(d3.range(n).map(i => d3.range(n).map(j => -0.5 * (sq(i, j) - rowm[i] - rowm[j] + tot))));
+  const Z0 = new Float64Array(2 * n);
+  for (let k = 0; k < 2; k++) { const s = Math.sqrt(Math.max(E[k].val, 0)); for (let i = 0; i < n; i++) Z0[2 * i + k] = s * E[k].vec[i]; }
+  return Z0;
+}
+
+function setBest(ds, r) {
+  ds.best = r.stress; ds.Zbest = r.end;
+  ds.R = Math.sqrt(d3.max(d3.range(ds.n), i => r.end[2 * i] * r.end[2 * i] + r.end[2 * i + 1] * r.end[2 * i + 1]));
+}
+
+// everything derived from one dataset: distances, the cube window, the best map known
+function prep(ds) {
+  if (ds.ready) return ds;
+  const n = ds.n = ds.names.length, del = ds.del = new Float64Array(n * n), J = [0, 1, 2];
+  if (ds.pts) {
+    ds.mean = J.map(j => d3.mean(ds.pts, p => p[j]));
+    ds.sd = J.map(j => d3.deviation(ds.pts, p => p[j]));
+    ds.U = ds.pts.map(p => J.map(j => (p[j] - ds.mean[j]) / ds.sd[j]));          // drawn coordinates
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++)
+      del[i * n + j] = Math.hypot(ds.U[i][0] - ds.U[j][0], ds.U[i][1] - ds.U[j][1], ds.U[i][2] - ds.U[j][2]);
+    const lo = J.map(j => d3.min(ds.U, u => u[j])), hi = J.map(j => d3.max(ds.U, u => u[j]));
+    ds.ctr = J.map(j => (lo[j] + hi[j]) / 2);
+    ds.half = 1.06 * d3.max(J, j => hi[j] - lo[j]) / 2;
+    ds.thin = eigSym(J.map(a => J.map(b => d3.mean(ds.U, u => u[a] * u[b]))))[2].vec;   // direction the cloud is thinnest in
+    ds.fmtf = ds.fmt.map(f => d3.format(f));
+    ds.fill = ds.grp.map(g => GCOL[g]);
+    ds.dotR = 4.4;
+  } else {
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) del[i * n + j] = ds.D[i][j];
+    ds.lab = ds.labels || ds.names;
+    ds.fill = ds.nm ? ds.nm.map(nmColor) : ds.names.map(() => C_ONE);
+    ds.dotR = ds.nm ? 7.5 : 5;
+  }
+
+  let den = 0, mx = 0;
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) { den += del[i * n + j] * del[i * n + j]; mx = Math.max(mx, del[i * n + j]); }
+  ds.den = den; ds.rms = Math.sqrt(den / (n * (n - 1) / 2)); ds.dmax = mx;
+  ds.posf = d3.format(ds.rms >= 50 ? ",.0f" : ".2f");             // a position on the map, in the data's distance units
+
+  const rng = mulberry32(12345);
+  [classical(ds)].concat(d3.range(12).map(() => scatter(ds, rng))).forEach(Z0 => {
+    const r = run(ds, Z0, false);
+    if (!ds.Zbest || r.stress < ds.best) setBest(ds, r);
+  });
+  ds.H = 1.07 * Math.max(ds.R, SPREAD * ds.rms) * (ds.pts ? 1 : 1.2);   // half-width of the map window (room for names in tab 2)
+  ds.k = (P / 2 - 5) / ds.H;                                      // pixels per unit of distance on the map
+  ds.rng = mulberry32(2026);
+  // opening pick, compared with the item farthest from it: the most central item in tab 1 (its lines
+  // spread every way), the most remote one in tab 2 (its lines cross the whole named map)
+  const rowsum = i => d3.sum(d3.range(n), j => del[i * n + j]);
+  ds.a0 = (ds.pts ? d3.minIndex : d3.maxIndex)(d3.range(n), rowsum);
+  ds.b0 = d3.maxIndex(d3.range(n), j => del[ds.a0 * n + j]);
+  ds.anchor = new Int8Array(n); ds.labW = new Float64Array(n);
+  ds.ready = true;
+  return ds;
+}
+
+// a random start from which gradient descent reaches the best map known (see LOCAL OPTIMA in the header comment)
+function findScramble(ds) {
+  for (let t = 0; ; t++) {
+    const Z0 = scatter(ds, ds.rng), r = run(ds, Z0, false);
+    if (r.stress < ds.best * (1 - 1e-6)) setBest(ds, r);
+    if (ALLOW_STUCK || r.stress <= ds.best * 1.002 + 1e-12 || t >= 400) { const full = run(ds, Z0, true); full.tries = t + 1; return full; }
+  }
+}
+
+// approximate screen color of a wavelength in nanometres (Bruton's piecewise rule), for display only
+function nmColor(w) {
+  let r = 0, g = 0, b = 0;
+  if (w < 440) { r = (440 - w) / 60; b = 1; }
+  else if (w < 490) { g = (w - 440) / 50; b = 1; }
+  else if (w < 510) { g = 1; b = (510 - w) / 20; }
+  else if (w < 580) { r = (w - 510) / 70; g = 1; }
+  else if (w < 645) { r = 1; g = (645 - w) / 65; }
+  else r = 1;
+  const f = w < 420 ? 0.3 + 0.7 * (w - 380) / 40 : w > 700 ? 0.3 + 0.7 * (780 - w) / 80 : 1;
+  const ch = v => Math.round(255 * Math.pow(Math.max(0, v) * f, 0.8));
+  return `rgb(${ch(r)},${ch(g)},${ch(b)})`;
+}
+
+// ---- pictures -------------------------------------------------------------------
+const toNear = d3.interpolateRgb(C_OK, C_NEAR), toFar = d3.interpolateRgb(C_OK, C_FAR);
+// how wrong the map has the pair (i, j), as a share of a typical data distance: < 0 too close, > 0 too far apart
+const errOf = (i, j) => (dmap(Z, i, j) - DS.del[i * DS.n + j]) / DS.rms;
+function errColor(e) {
+  const t = Math.max(-1, Math.min(1, e / KFULL));
+  return t < 0 ? toNear(Math.pow(-t, 0.75)) : toFar(Math.pow(t, 0.75));
+}
+
+// 3D data coordinates -> pixels (same orthographic view as PCA in Pictures); third value = depth
+function to3D(u) {
+  const x = u[0] - DS.ctr[0], y = u[1] - DS.ctr[1], z = u[2] - DS.ctr[2], k = (P / 2) / (DS.half * 1.8);
+  const ca = Math.cos(S.yaw), sa = Math.sin(S.yaw), cp = Math.cos(S.pitch), sp = Math.sin(S.pitch);
+  const X = x * ca + y * sa, D = -x * sa + y * ca;
+  return [P / 2 + k * X, P / 2 - k * (z * cp + D * sp), (D * cp - z * sp) / DS.half];
+}
+// map coordinates -> pixels, after the viewer's flip and turn
+function toMap(x, y) {
+  const fx = S.flip * x, c = Math.cos(S.rot), s = Math.sin(S.rot);
+  return [P / 2 + DS.k * (c * fx - s * y), P / 2 - DS.k * (s * fx + c * y)];
+}
+
+function build() {
+  d3.select("#tabs").selectAll("button").data(TABS).join("button")
+    .attr("type", "button").text(t => t.label)
+    .on("click", (ev, t) => setTab(TABS.indexOf(t)));
+  d3.select("#acts").selectAll("button").data([
+    { id: "go", label: "Run gradient descent", fn: arrange },
+    { id: "mix", label: "Re-initialize randomly", fn: scramble },
+    // { id: "flip", label: "Flip the map", fn: flip }
+  ]).join("button").attr("type", "button").attr("id", b => b.id).text(b => b.label).on("click", (ev, b) => b.fn());
+  d3.select("#capR").text("The map: 2 dimensions");
+
+  // left picture: the 3D cloud (tab 1) or the distance table (tab 2)
+  L.svg3 = d3.select("#left").append("svg").attr("class", "turn").attr("viewBox", `0 0 ${P} ${P}`).attr("width", P).attr("height", P);
+  L.svg3.append("rect").attr("width", P).attr("height", P).attr("fill", "#fafafa").attr("stroke", "#ccc");
+  L.box = L.svg3.append("g").attr("stroke", "#c4c4c4").attr("fill", "none");
+  L.lab3 = L.svg3.append("g");
+  L.dLines = L.svg3.append("g").attr("stroke-linecap", "round");
+  L.dDots = L.svg3.append("g");
+  L.dRings = L.svg3.append("g").attr("fill", "none").attr("stroke", "#111").attr("pointer-events", "none");
+  L.dHits = L.svg3.append("g").attr("fill", "transparent");
+  L.svg3.call(d3.drag()
+    .on("start", () => { dragging = true; })
+    .on("drag", ev => {
+      S.yaw -= ev.dx * 0.01;
+      S.pitch = Math.max(-0.15, Math.min(1.45, S.pitch + ev.dy * 0.01));
+      draw3D(true);
+    })
+    .on("end", () => { dragging = false; }));
+
+  L.svgT = d3.select("#left").append("svg").attr("viewBox", `0 0 ${P} ${P}`).attr("width", P).attr("height", P);
+  L.tCells = L.svgT.append("g");
+  L.tErr = L.svgT.append("g").attr("pointer-events", "none");
+  L.tRows = L.svgT.append("g");
+  L.tCols = L.svgT.append("g");
+  L.tMark = L.svgT.append("g").attr("fill", "none").attr("stroke", "#111").attr("pointer-events", "none");
+
+  // right picture: the map
+  L.svgM = d3.select("#right").append("svg").attr("viewBox", `0 0 ${P} ${P}`).attr("width", P).attr("height", P);
+  L.svgM.append("defs").append("clipPath").attr("id", "mapclip").append("rect").attr("x", 1).attr("y", 1).attr("width", P - 2).attr("height", P - 2);
+  L.svgM.append("rect").attr("width", P).attr("height", P).attr("fill", "#fafafa").attr("stroke", "#ccc");
+  const inner = L.svgM.append("g").attr("clip-path", "url(#mapclip)");
+  L.mLines = inner.append("g").attr("stroke-linecap", "round");
+  L.mPlates = inner.append("g").attr("pointer-events", "none");      // names sit on plates of the map's own color, over the lines
+  L.mNames = inner.append("g").attr("pointer-events", "none");
+  L.mDots = inner.append("g");
+  L.mRings = inner.append("g").attr("fill", "none").attr("stroke", "#111").attr("pointer-events", "none");
+  L.mHits = inner.append("g").attr("fill", "transparent");
+  let last = 0;
+  const ang = ev => Math.atan2(ev.y - P / 2, ev.x - P / 2);
+  L.svgM.call(d3.drag()
+    .on("start", ev => { dragging = true; last = ang(ev); })
+    .on("drag", ev => {
+      const a = ang(ev); let d = a - last; last = a;
+      if (d > Math.PI) d -= 2 * Math.PI; else if (d < -Math.PI) d += 2 * Math.PI;
+      turn(-d);
+    })
+    .on("end", () => { dragging = false; }));
+}
+
+function stopAnim() { if (anim) { anim.stop(); anim = null; } }
+
+function setTab(t) { if (t !== S.tab) { S.tab = t; setData(); } }
+function setDataset(i) { if (i !== S.i[S.tab]) { S.i[S.tab] = i; setData(); } }
+
+// new tab or new dataset: recompute and rebuild the static parts; the map opens on a random start
+function setData() {
+  stopAnim();
+  const T = TABS[S.tab];
+  DS = prep(T.data[S.i[S.tab]]);
+  const n = DS.n, is3 = !!DS.pts, idx = d3.range(n);
+  S.a = DS.a0; S.b = DS.b0; S.rot = 0; S.flip = S.flipTo = 1;
+  if (flipAnim) { flipAnim.stop(); flipAnim = null; }
+  TR = findScramble(DS); Z = TR.states[0].slice(); S.phase = "scrambled";
+
+  d3.select("#tabs").selectAll("button").classed("on", (q, i) => i === S.tab);
+  d3.select("#picker").selectAll("button").data(T.data, d => d.key).join("button")
+    .attr("type", "button").text(d => d.label)
+    .on("click", (ev, d) => setDataset(T.data.indexOf(d)))
+    .classed("on", (d, i) => i === S.i[S.tab]);
+  d3.select("#lead").text(T.lead);
+  d3.select("#how").text(T.how);
+  d3.select("#capL").text(is3 ? T.capL : DS.given);
+
+  const lg = d3.select("#legend").html("");
+  (DS.groups || []).forEach((gname, g) => { const s = lg.append("span"); s.append("i").attr("class", "dot").style("background", GCOL[g]); s.append("span").text(gname); });
+  const s0 = lg.append("span"); if (DS.groups) s0.attr("class", "sep"); s0.text("A line on the map:");
+  [[C_NEAR, "too close"], [C_OK, "right"], [C_FAR, "too far apart"]].forEach(([c, t]) => {
+    const s = lg.append("span"); s.append("i").attr("class", "ln").style("border-color", c); s.append("span").text(t);
+  });
+  d3.select("#legend").append("span").attr("class", "hint").text(T.hint);
+
+  // the map
+  const tip = i => is3 ? `${DS.names[i]}: ${DS.axes.map((a, j) => a + " " + DS.fmtf[j](DS.pts[i][j])).join("; ")}` : DS.names[i];
+  L.mLines.selectAll("line").data(idx).join("line");
+  L.mDots.selectAll("circle").data(idx).join("circle").attr("r", DS.dotR)
+    .attr("fill", i => DS.fill[i]).attr("stroke", i => d3.color(DS.fill[i]).darker(0.9)).attr("stroke-width", 0.8);
+  L.mRings.selectAll("circle").data(["a", "b"]).join("circle").attr("r", DS.dotR + 4)
+    .attr("stroke-width", q => q === "a" ? 2.3 : 1.8).attr("stroke-dasharray", q => q === "a" ? null : "3.5 2.5");
+  L.mHits.selectAll("circle").data(idx).join("circle").attr("class", "hit").attr("r", Math.max(9, DS.dotR + 3))
+    .on("click", (ev, i) => pick(i)).on("mouseenter", (ev, i) => { if (!dragging) compare(i); })
+    .each(function (i) { d3.select(this).selectAll("title").data([0]).join("title").text(tip(i)); });
+  L.mPlates.selectAll("rect").data(is3 ? [] : idx).join("rect").attr("fill", "#fafafa").attr("rx", 2);
+  L.mNames.selectAll("text").data(is3 ? [] : idx).join("text").attr("font-size", 11.5).attr("text-anchor", "middle")
+    .attr("fill", "#222").text(i => DS.lab[i])
+    .each(function (i) { DS.labW[i] = (this.getComputedTextLength ? this.getComputedTextLength() : DS.lab[i].length * 6.3) + 6; });
+
+  // the left picture
+  L.svg3.style("display", is3 ? null : "none");
+  L.svgT.style("display", is3 ? "none" : null);
+  if (is3) {
+    S.pitch = 0.38;     // opening view: the cloud's flattest side seen mostly, not exactly, face-on
+    const nn = DS.thin, cp = Math.cos(S.pitch), sp = Math.sin(S.pitch);
+    const facing = a => Math.abs(-Math.sin(a) * cp * nn[0] + Math.cos(a) * cp * nn[1] - sp * nn[2]);
+    S.yaw = d3.least(d3.range(-1.4, 1.4, 0.05), a => Math.abs(facing(a) - 0.8) + 0.02 * Math.abs(a + 0.55));
+    L.lab3.selectAll("text").data(DS.axes).join("text").attr("class", "axt").attr("text-anchor", "middle").attr("dominant-baseline", "central").attr("font-size", 12.5).text(t => t);
+    L.dLines.selectAll("line").data(idx).join("line");
+    L.dDots.selectAll("circle").data(idx).join("circle")
+      .attr("fill", i => DS.fill[i]).attr("stroke", i => d3.color(DS.fill[i]).darker(0.9)).attr("stroke-width", 0.8);
+    L.dRings.selectAll("circle").data(["a", "b"]).join("circle")
+      .attr("stroke-width", q => q === "a" ? 2.3 : 1.8).attr("stroke-dasharray", q => q === "a" ? null : "3.5 2.5");
+    L.dHits.selectAll("circle").data(idx).join("circle").attr("class", "hit").attr("r", 9)
+      .on("click", (ev, i) => pick(i)).on("mouseenter", (ev, i) => { if (!dragging) compare(i); })
+      .each(function (i) { d3.select(this).selectAll("title").data([0]).join("title").text(tip(i)); });
+  } else buildTable();
+
+  api();
+  refresh(true);
+}
+
+// the distance table of tab 2
+function buildTable() {
+  const n = DS.n, lab = DS.lab, idx = d3.range(n), fs = 10.5;
+  const wid = d3.max(lab, s => s.length) * 6.4, rot = d3.max(lab, s => s.length) > 4;
+  const ml = wid + 12 + (DS.nm ? 16 : 0), mt = rot ? wid + 10 : 22;
+  const c = Math.min((P - ml - 4) / n, (P - mt - 4) / n), x0 = P - 4 - c * n, y0 = P - 4 - c * n;
+  DS.geo = { c, x0, y0 };
+  const shade = d3.scaleLinear().domain([0, DS.dmax]).range(["#ffffff", "#a9bdd3"]);
+  const cells = d3.cross(idx, idx);
+  const gg = L.tCells.selectAll("g").data(cells, d => d[0] + "-" + d[1]).join("g")
+    .attr("transform", d => `translate(${x0 + d[1] * c},${y0 + d[0] * c})`)
+    .attr("class", d => d[0] === d[1] ? null : "hit")
+    .on("click", (ev, d) => { if (d[0] !== d[1]) { pick(d[0]); compare(d[1]); } })
+    .on("mouseenter", (ev, d) => { if (d[0] === S.a) compare(d[1]); });
+  gg.selectAll("rect").data(d => [d]).join("rect").attr("width", c).attr("height", c).attr("stroke", "#fff")
+    .attr("fill", d => d[0] === d[1] ? "#eeeeee" : shade(DS.D[d[0]][d[1]]));
+  gg.selectAll("text").data(d => d[0] === d[1] ? [] : [d]).join("text").attr("x", c / 2).attr("y", c / 2 + 3.7)
+    .attr("text-anchor", "middle").attr("font-size", fs).attr("fill", "#222").text(d => DS.cell(DS.D[d[0]][d[1]]));
+  L.tRows.selectAll("g").data(idx).join("g").attr("class", "hit").attr("transform", i => `translate(0,${y0 + i * c})`)
+    .on("click", (ev, i) => pick(i))
+    .each(function (i) {
+      const g = d3.select(this);
+      g.selectAll("rect.bg").data([0]).join("rect").attr("class", "bg").attr("width", x0).attr("height", c).attr("fill", "transparent");
+      g.selectAll("rect.sw").data(DS.nm ? [0] : []).join("rect").attr("class", "sw").attr("x", x0 - 17).attr("y", c / 2 - 6)
+        .attr("width", 12).attr("height", 12).attr("rx", 6).attr("fill", DS.fill[i]).attr("stroke", "#666").attr("stroke-width", 0.6);
+      g.selectAll("text").data([0]).join("text").attr("x", x0 - (DS.nm ? 22 : 6)).attr("y", c / 2 + 4)
+        .attr("text-anchor", "end").attr("font-size", 12).attr("fill", "#222").text(lab[i]);
+    });
+  L.tCols.selectAll("text").data(idx).join("text").attr("font-size", 12).attr("fill", "#222")
+    .attr("text-anchor", "middle").attr("transform", null).text(i => lab[i])
+    .attr("transform", function (i) {
+      if (!rot) return `translate(${x0 + i * c + c / 2},${y0 - 7})`;
+      const len = this.getComputedTextLength ? this.getComputedTextLength() : lab[i].length * 6.4;     // jsdom cannot measure text
+      return `translate(${x0 + i * c + c / 2 + 4},${(y0 - 6 - len / 2).toFixed(1)}) rotate(-90)`;
+    });
+  L.tMark.selectAll("rect").data(["row", "cell"]).join("rect").attr("stroke-width", q => q === "row" ? 2 : 2.6);
+  L.tErr.selectAll("rect").data(idx).join("rect").attr("height", 4.5).attr("width", c - 2);
+}
+
+// ---- drawing ------------------------------------------------------------------------
+// everything that depends on which two items are picked
+function refresh(sort) {
+  renderTwo();
+  if (DS.pts) draw3D(sort); else drawTablePick();
+  frame();
+  buttons();
+}
+
+// everything that moves while the map moves
+function frame() { drawMap(); if (!DS.pts) drawTableErr(); drawBars(); }
+
+function buttons() {
+  d3.select("#go").property("disabled", S.phase !== "scrambled");
+}
+
+function drawMap() {
+  const n = DS.n, a = S.a, b = S.b, px = new Array(n);
+  for (let i = 0; i < n; i++) px[i] = toMap(Z[2 * i], Z[2 * i + 1]);
+  const at = function (i) { this.setAttribute("cx", px[i][0]); this.setAttribute("cy", px[i][1]); };
+  L.mDots.selectAll("circle").each(at);
+  L.mHits.selectAll("circle").each(at);
+  L.mRings.selectAll("circle").each(function (q) { at.call(this, q === "a" ? a : b); });
+  L.mLines.selectAll("line").each(function (j) {
+    if (j === a) { this.setAttribute("display", "none"); return; }
+    this.removeAttribute("display");
+    this.setAttribute("x1", px[a][0]); this.setAttribute("y1", px[a][1]); this.setAttribute("x2", px[j][0]); this.setAttribute("y2", px[j][1]);
+    this.setAttribute("stroke", errColor(errOf(a, j)));
+    this.setAttribute("stroke-width", j === b ? 4.5 : 1.5);
+    this.setAttribute("stroke-opacity", j === b ? 1 : 0.85);
+  });
+  if (!DS.pts) placeNames(px);
+}
+
+// does the segment p-q pass through the box [x0, y0, x1, y1]? (Liang-Barsky)
+function crosses(p, q, bx) {
+  let t0 = 0, t1 = 1;
+  const dx = q[0] - p[0], dy = q[1] - p[1], P4 = [-dx, dx, -dy, dy], Q4 = [p[0] - bx[0], bx[2] - p[0], p[1] - bx[1], bx[3] - p[1]];
+  for (let e = 0; e < 4; e++) {
+    if (Math.abs(P4[e]) < 1e-12) { if (Q4[e] < 0) return false; continue; }
+    const r = Q4[e] / P4[e];
+    if (P4[e] < 0) { if (r > t1) return false; if (r > t0) t0 = r; } else { if (r < t0) return false; if (r < t1) t1 = r; }
+  }
+  return t0 < t1;
+}
+
+// names on the map (tab 2): each goes to the side of its dot where it covers the least
+const SIDES = [[1, 0], [-1, 0], [0, -1], [0, 1], [1, -1], [-1, -1], [1, 1], [-1, 1]];
+const SPOTS = SIDES.map(sd => [sd[0], sd[1], 0]).concat(SIDES.map(sd => [sd[0], sd[1], 11]));    // [side x, side y, extra distance]
+function placeNames(px) {
+  const r = DS.dotR + 1.5, h = 14, placed = [], plates = L.mPlates.selectAll("rect").nodes();
+  const over = (p, q) => Math.max(0, Math.min(p[2], q[2]) - Math.max(p[0], q[0])) * Math.max(0, Math.min(p[3], q[3]) - Math.max(p[1], q[1]));
+  const dotBox = px.map(q => [q[0] - r, q[1] - r, q[0] + r, q[1] + r]);
+  L.mNames.selectAll("text").each(function (i) {
+    const w = DS.labW[i], x = px[i][0], y = px[i][1];
+    let bestCost = Infinity, bestK = 0, bestC = null;
+    SPOTS.forEach((sp, k) => {
+      const dg = sp[0] && sp[1] ? 0.7 : 1;
+      const cx = x + sp[0] * (r * dg + 3 + sp[2] * dg + w / 2), cy = y + sp[1] * (r * dg + 2 + sp[2] * dg + h / 2);
+      const bx = [cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2];
+      const wide = [bx[0] - 4, bx[1] - 4, bx[2] + 4, bx[3] + 4];         // keep the lines a few pixels clear of a name
+      let cost = k + (k === DS.anchor[i] ? 0 : 25);
+      for (let j = 0; j < px.length; j++) if (j !== i) {
+        cost += 4 * over(bx, dotBox[j]);
+        if (j !== S.a && crosses(px[S.a], px[j], wide)) cost += 45;
+      }
+      if (i !== S.a && crosses(px[S.a], px[i], wide)) cost += 45;
+      placed.forEach(pb => { cost += 6 * over(bx, pb); });
+      cost += 30 * (w * h - over(bx, [3, 3, P - 3, P - 3]));
+      if (cost < bestCost) { bestCost = cost; bestK = k; bestC = [cx, cy, bx]; }
+    });
+    DS.anchor[i] = bestK; placed.push(bestC[2]);
+    this.setAttribute("x", bestC[0].toFixed(1)); this.setAttribute("y", (bestC[1] + 4).toFixed(1));
+    const pl = plates[i];
+    pl.setAttribute("x", bestC[2][0].toFixed(1)); pl.setAttribute("y", bestC[2][1].toFixed(1)); pl.setAttribute("width", w.toFixed(1)); pl.setAttribute("height", h);
+  });
+}
+
+// the 3D picture: called when the pick changes and on every drag
+function draw3D(sort) {
+  const n = DS.n, a = S.a, b = S.b, q = DS.U.map(to3D);
+  const at = function (i) { this.setAttribute("cx", q[i][0]); this.setAttribute("cy", q[i][1]); };
+  L.dDots.selectAll("circle").each(function (i) { at.call(this, i); this.setAttribute("r", DS.dotR - 1.1 * q[i][2]); });   // nearer dots a little bigger
+  L.dHits.selectAll("circle").each(at);
+  if (sort) {            // nearer dots drawn on top
+    const far = (i, j) => q[j][2] - q[i][2];
+    L.dDots.selectAll("circle").sort(far); L.dHits.selectAll("circle").sort(far);
+  }
+  L.dRings.selectAll("circle").each(function (w) { const i = w === "a" ? a : b; at.call(this, i); this.setAttribute("r", DS.dotR - 1.1 * q[i][2] + 4); });
+  L.dLines.selectAll("line").each(function (j) {
+    if (j === a) { this.setAttribute("display", "none"); return; }
+    this.removeAttribute("display");
+    this.setAttribute("x1", q[a][0]); this.setAttribute("y1", q[a][1]); this.setAttribute("x2", q[j][0]); this.setAttribute("y2", q[j][1]);
+    this.setAttribute("stroke", C_DATA);
+    this.setAttribute("stroke-width", j === b ? 4.5 : 1.2);
+    this.setAttribute("stroke-opacity", j === b ? 1 : 0.6);
+  });
+
+  // cube frame, and one name per variable on the outermost of the four edges parallel to it
+  const h = DS.half, c = DS.ctr, Pt = (sx, sy, sz) => to3D([c[0] + sx * h, c[1] + sy * h, c[2] + sz * h]);
+  const edges = [];
+  [-1, 1].forEach(s => [-1, 1].forEach(t => { edges.push([Pt(-1, s, t), Pt(1, s, t)], [Pt(s, -1, t), Pt(s, 1, t)], [Pt(s, t, -1), Pt(s, t, 1)]); }));
+  L.box.selectAll("line").data(edges).join("line")
+    .attr("x1", e => e[0][0]).attr("y1", e => e[0][1]).attr("x2", e => e[1][0]).attr("y2", e => e[1][1]);
+  const cen = [P / 2, P / 2], sgn = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
+  const out = e => Math.hypot((e[0][0] + e[1][0]) / 2 - cen[0], (e[0][1] + e[1][1]) / 2 - cen[1]) + 0.15 * (e[0][1] + e[1][1]) / 2;
+  L.lab3.selectAll("text").each(function (t, j) {
+    const e = sgn.map(sg => [-1, 1].map(end => { const v = [sg[0], sg[1]]; v.splice(j, 0, end); return Pt(v[0], v[1], v[2]); }))
+      .reduce((best, cand) => out(cand) > out(best) + 1 ? cand : best);
+    const mx = (e[0][0] + e[1][0]) / 2, my = (e[0][1] + e[1][1]) / 2, dx = e[1][0] - e[0][0], dy = e[1][1] - e[0][1], len = Math.hypot(dx, dy);
+    if (len < 0.62 * t.length * 6.6) { this.setAttribute("display", "none"); return; }       // edge seen end-on: no room for its name
+    this.removeAttribute("display");
+    let ang = Math.atan2(dy, dx) * 180 / Math.PI, nx = -dy / len, ny = dx / len;
+    if (ang > 90) ang -= 180; else if (ang < -90) ang += 180;
+    if (nx * (mx - cen[0]) + ny * (my - cen[1]) < 0) { nx = -nx; ny = -ny; }
+    this.setAttribute("transform", `translate(${(mx + 13 * nx).toFixed(1)},${(my + 13 * ny).toFixed(1)}) rotate(${ang.toFixed(1)})`);
+  });
+}
+
+// the table: outline the picked row and the compared cell
+function drawTablePick() {
+  const { c, x0, y0 } = DS.geo, a = S.a, b = S.b;
+  L.tMark.selectAll("rect").each(function (q) {
+    const r = q === "row" ? [x0, y0 + a * c, DS.n * c, c] : [x0 + b * c + 2.5, y0 + a * c + 2.5, c - 5, c - 5];
+    d3.select(this).attr("x", r[0]).attr("y", r[1]).attr("width", r[2]).attr("height", r[3]).attr("stroke-dasharray", q === "row" ? null : "3.5 2.5");
+  });
+  L.tRows.selectAll("text").attr("font-weight", i => i === a ? "bold" : null);
+  L.tCols.selectAll("text").attr("font-weight", i => i === b ? "bold" : null);
+  L.tErr.selectAll("rect").attr("x", j => x0 + j * c + 1).attr("y", y0 + a * c + c - 5.5).attr("display", j => j === a ? "none" : null);
+}
+// ... and under each number of the picked row, the color of that pair's line on the map
+function drawTableErr() {
+  const a = S.a;
+  L.tErr.selectAll("rect").each(function (j) { if (j !== a) this.setAttribute("fill", errColor(errOf(a, j))); });
+}
+
+// the two picked items: their numbers in the data (left, when there are any) and on the map (right)
+function renderTwo() {
+  const cols = DS.pts ? DS.axes : [], tabs = [d3.select("#two").classed("bare", !DS.pts).html(""), d3.select("#twoM").html("")];
+  const heads = [cols, ["across the map", "up the map"]];
+  tabs.forEach((t, w) => { const hd = t.append("tr"); hd.append("td").attr("class", "who"); heads[w].forEach(cn => hd.append("th").text(cn)); });
+  [S.a, S.b].forEach((i, r) => tabs.forEach((t, w) => {
+    const tr = t.append("tr"), td = tr.append("td").attr("class", "who").attr("title", DS.names[i]);
+    td.append("i").attr("class", "ring " + "ab"[r]).style("background", DS.fill[i]);
+    td.append("span").text(DS.names[i]);
+    if (w === 0) cols.forEach((cn, j) => tr.append("td").text(DS.fmtf[j](DS.pts[i][j])));
+    else [0, 1].forEach(k => tr.append("td").attr("id", "pos" + r + k));
+  }));
+}
+
+function pct(s) { const v = 100 * s; return (v >= 9.95 ? d3.format(".0f")(v) : d3.format(".1f")(v)) + "%"; }
+
+function drawBars() {
+  const n = DS.n, a = S.a, b = S.b, dd = DS.del[a * n + b], dm = dmap(Z, a, b), e = (dm - dd) / DS.rms, full = 1.5 * DS.dmax;
+  const w = v => (100 * Math.min(1, v / full)).toFixed(2) + "%";
+  d3.select("#barD").style("width", w(dd)).style("background", C_DATA);
+  d3.select("#barM").style("width", w(dm)).style("background", errColor(e));
+  const rel = dd > 0 ? Math.abs(dm - dd) / dd : Infinity, side = dm > dd ? "too far apart" : "too close";
+  const verdict = rel < 0.005 ? "right" : rel < 9.995 ? d3.format(".0%")(rel) + " " + side : side;
+  d3.select("#valD").text(DS.say ? DS.say(dd) : "");
+  d3.select("#valM").text(DS.say ? DS.say(dm) + "; " + verdict : verdict);
+  [a, b].forEach((i, r) => {          // where the two sit on the map as it is shown (after flip and turn)
+    const fx = S.flip * Z[2 * i], y = Z[2 * i + 1], c = Math.cos(S.rot), sn = Math.sin(S.rot), v = [c * fx - sn * y, sn * fx + c * y];
+    [0, 1].forEach(k => d3.select("#pos" + r + k).text(DS.posf(v[k])));
+  });
+  const s = stress(DS, Z);
+  d3.select("#barS").style("width", (100 * Math.min(1, s)).toFixed(2) + "%").style("background", "#444");
+  d3.select("#valS").text("off by " + pct(s));
+}
+
+// ---- actions ------------------------------------------------------------------------
+function pick(i) {
+  if (i === S.a) return;
+  if (i === S.b) S.b = S.a;
+  S.a = i; refresh(false);
+}
+function compare(j) {
+  if (j === S.a || j === S.b) return;
+  S.b = j; refresh(false);
+}
+
+// play the gradient descent steps from the random start, at a steady speed along the path the dots travel
+function arrange() {
+  if (S.phase !== "scrambled") return;
+  S.phase = "moving"; buttons();
+  const T = 5200, last = TR.arc.length - 1, tot = TR.arc[last], ease = d3.easeCubicInOut;
+  anim = d3.timer(el => {
+    const t = Math.min(1, el / T), s = tot * ease(t);
+    let lo = 0, hi = last;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (TR.arc[mid] <= s) lo = mid; else hi = mid; }
+    const f = TR.arc[hi] > TR.arc[lo] ? (s - TR.arc[lo]) / (TR.arc[hi] - TR.arc[lo]) : 1, A = TR.states[lo], B = TR.states[hi];
+    for (let k = 0; k < Z.length; k++) Z[k] = A[k] + f * (B[k] - A[k]);
+    if (t >= 1) finish(); else frame();
+  });
+}
+// jump to the end of the run
+function finish() {
+  stopAnim();
+  Z.set(TR.states[TR.states.length - 1]); S.phase = "arranged"; buttons(); frame();
+}
+
+function scramble() {
+  stopAnim();
+  TR = findScramble(DS);
+  const from = Z.slice(), to = TR.states[0], T = 450;
+  S.phase = "moving"; buttons();
+  anim = d3.timer(el => {
+    const t = d3.easeCubicInOut(Math.min(1, el / T));
+    for (let k = 0; k < Z.length; k++) Z[k] = from[k] + t * (to[k] - from[k]);
+    if (el >= T) { stopAnim(); Z.set(to); S.phase = "scrambled"; buttons(); }
+    frame();
+  });
+}
+// put the random start in place at once (no slide)
+function settle() { if (S.phase === "moving") { stopAnim(); Z.set(TR.states[0]); S.phase = "scrambled"; buttons(); frame(); } }
+
+// mirror the map: no distance on it changes
+function flip() {
+  S.flipTo = -S.flipTo;
+  const from = S.flip, to = S.flipTo, T = 500;
+  if (flipAnim) flipAnim.stop();
+  flipAnim = d3.timer(el => {
+    S.flip = from + (to - from) * d3.easeCubicInOut(Math.min(1, el / T));
+    if (el >= T) { flipAnim.stop(); flipAnim = null; S.flip = to; }
+    frame();
+  });
+}
+// turn the map: no distance on it changes
+function turn(da) { S.rot += da; frame(); }
+
+function api() {
+  window.__api = {
+    state: () => ({ ...S, i: S.i.slice(), key: DS.key, n: DS.n, stress: stress(DS, Z), best: DS.best, tries: TR.tries }),
+    ds: () => DS, map: () => Z, run: () => TR, tabs: TABS,
+    setTab, setDataset, pick, compare, arrange, finish, scramble, settle, flip, turn,
+    engine: { prep, stress, run, scatter, classical, guttman, findScramble, mulberry32, errColor, nmColor, toMap, to3D }
+  };
+}
+
+function main() {
+  if (main.done) return; main.done = true;
+  build(); setData();
+}
+window.addEventListener("load", main);
+</script>
+</body>
+</html>
